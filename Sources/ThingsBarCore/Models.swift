@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ThingsBarInfo {
-    public static let version = "0.6.2"
+    public static let version = "0.7.0"
 }
 
 /// An open to-do as read from Things.
@@ -70,6 +70,19 @@ public struct SourceCatalog: Sendable, Equatable {
     public func areaName(for id: String?) -> String? {
         guard let id else { return nil }
         return areas.first { $0.identifier == id }?.name
+    }
+
+    /// The project or area to show under a to-do: its project, else its area. Nil when that
+    /// is the project or area being listed, since the panel's heading already names it. A
+    /// project inside a listed area still shows, as it says more than the area does.
+    public func parentName(for item: TodoItem, listedFrom source: ThingsSource) -> String? {
+        if let name = projectName(for: item.projectID) {
+            return source.kind == .project && source.identifier == item.projectID ? nil : name
+        }
+        if let name = areaName(for: item.areaID) {
+            return source.kind == .area && source.identifier == item.areaID ? nil : name
+        }
+        return nil
     }
 }
 

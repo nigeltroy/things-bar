@@ -7,7 +7,9 @@
 #
 # Optional environment:
 #   VERSION=1.2.0   sets CFBundleShortVersionString (default: value in Info.plist)
-#   BUILD=42        sets CFBundleVersion (default: value in Info.plist)
+#   BUILD=42        sets CFBundleVersion (default: value in Info.plist); Sparkle compares it
+#   SIGN_IDENTITY="Developer ID Application: …"
+#                   signs for distribution (hardened runtime, timestamp) instead of ad-hoc
 set -euo pipefail
 cd "${0:A:h}/.."
 
@@ -22,12 +24,15 @@ for arg in "$@"; do
 done
 
 swift build -c "$CONFIG" "${ARCH_FLAGS[@]}"
-BIN="$(swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --show-bin-path)/ThingsBar"
+BIN_DIR="$(swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --show-bin-path)"
+BIN="$BIN_DIR/ThingsBar"
 
 APP="build/ThingsBar.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/ThingsBar"
+# Sparkle (in-app updates); the binary looks for it via @executable_path/../Frameworks.
+ditto "$BIN_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 PLIST="$APP/Contents/Info.plist"
@@ -38,6 +43,21 @@ if [[ -n "${BUILD:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$PLIST"
 fi
 
-# Ad-hoc sign so macOS keeps a stable identity for the Automation (TCC) grant.
-codesign --force --sign - "$APP" >/dev/null
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  # Ad-hoc: no Developer ID yet. macOS asks "Open Anyway" on first launch.
+  codesign --force --deep --sign - "$APP" >/dev/null
+else
+  # Developer ID, inside out, the way Sparkle documents it. The hardened runtime needs the
+  # Apple Events entitlement for reading and updating Things.
+  SIGN=(codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY")
+  "${SIGN[@]}" "$SPARKLE/XPCServices/Installer.xpc"
+  "${SIGN[@]}" --preserve-metadata=entitlements "$SPARKLE/XPCServices/Downloader.xpc"
+  "${SIGN[@]}" "$SPARKLE/Autoupdate"
+  "${SIGN[@]}" "$SPARKLE/Updater.app"
+  "${SIGN[@]}" "$APP/Contents/Frameworks/Sparkle.framework"
+  "${SIGN[@]}" --entitlements Resources/ThingsBar.entitlements "$APP"
+fi
+codesign --verify --strict --deep "$APP"
 echo "Built $APP ($(lipo -archs "$APP/Contents/MacOS/ThingsBar"), version $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST"))"

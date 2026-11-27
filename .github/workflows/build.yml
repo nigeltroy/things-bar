@@ -2,7 +2,17 @@ name: Build
 
 # Every push and pull request: run the unit tests and build a universal DMG
 # (downloadable from the run's "Artifacts" section).
-# Pushing a tag like v1.2.0 also publishes a GitHub Release with the DMG attached.
+# Pushing a tag like v1.2.0 also publishes a GitHub Release with the DMG and a signed
+# Sparkle appcast.xml attached; installed copies update in place from that appcast.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   SPARKLE_PRIVATE_KEY      EdDSA key that signs updates (scripts: generate_keys -x)
+# Optional, for Developer ID signing + notarization (no "Apple could not verify" warning):
+#   DEVELOPER_ID_P12         base64 of the "Developer ID Application" certificate + key (.p12)
+#   DEVELOPER_ID_P12_PASSWORD
+#   NOTARY_API_KEY           base64 of an App Store Connect API key (.p8)
+#   NOTARY_KEY_ID, NOTARY_ISSUER_ID
+# Without the Developer ID secrets the app is ad-hoc signed, as before.
 on:
   push:
     branches: [main]
@@ -20,7 +30,12 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
+    outputs:
+      notarized: ${{ steps.notarize.outputs.notarized || 'false' }}
+    env:
+      HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_P12 != '' && secrets.NOTARY_API_KEY != '' }}
+      HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -44,10 +59,32 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
+      - name: Import Developer ID certificate
+        id: identity
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+          test -n "$IDENTITY"
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+
       - name: Build universal app
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ github.run_number }}
+          SIGN_IDENTITY: ${{ steps.identity.outputs.identity }}
         run: ./scripts/build-app.sh --universal
 
       - name: Make DMG
@@ -56,15 +93,59 @@ jobs:
           DMG="build/ThingsBar-${{ steps.version.outputs.version }}.dmg"
           DMG="${DMG//+/-}"
           ./scripts/make-dmg.sh "$DMG"
-          (cd build && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize
+        id: notarize
+        if: env.HAS_DEVELOPER_ID == 'true'
+        env:
+          IDENTITY: ${{ steps.identity.outputs.identity }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          DMG="${{ steps.dmg.outputs.path }}"
+          codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+          echo "$NOTARY_API_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool submit "$DMG" --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait --timeout 20m
+          rm "$RUNNER_TEMP/notary.p8"
+          xcrun stapler staple "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+          echo "notarized=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checksum
+        run: |
+          DMG="${{ steps.dmg.outputs.path }}"
+          (cd build && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+
+      - name: Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_SPARKLE_KEY == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          DMG="${{ steps.dmg.outputs.path }}"
+          FEED="$RUNNER_TEMP/feed"; mkdir -p "$FEED"
+          cp "$DMG" "$FEED/"
+          RELEASE="https://github.com/$GITHUB_REPOSITORY/releases"
+          echo "$SPARKLE_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            --download-url-prefix "$RELEASE/download/$GITHUB_REF_NAME/" \
+            --link "$RELEASE/tag/$GITHUB_REF_NAME" \
+            --full-release-notes-url "$RELEASE/tag/$GITHUB_REF_NAME" \
+            -o build/appcast.xml "$FEED"
+          grep -q 'sparkle:edSignature' build/appcast.xml
+          cat build/appcast.xml
 
       - name: Smoke test the DMG
         run: |
           MNT=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "${{ steps.dmg.outputs.path }}"
           APP="$MNT/ThingsBar.app"
-          codesign --verify --strict --verbose=1 "$APP"
+          codesign --verify --strict --deep --verbose=1 "$APP"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          /usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist"
+          if [[ "$HAS_DEVELOPER_ID" == "true" ]]; then spctl --assess --type execute -vv "$APP"; fi
           test "$(lipo -archs "$APP/Contents/MacOS/ThingsBar")" = "x86_64 arm64"
           test -L "$MNT/Applications"
           "$APP/Contents/MacOS/ThingsBar" --selftest "$RUNNER_TEMP/selftest"
@@ -82,6 +163,7 @@ jobs:
           path: |
             build/ThingsBar-*.dmg
             build/ThingsBar-*.dmg.sha256
+            build/appcast.xml
           if-no-files-found: error
 
   release:
@@ -98,9 +180,17 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTARIZED: ${{ needs.build.outputs.notarized }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          INSTALL="Download **ThingsBar-$VERSION.dmg**, open it and drag ThingsBar to Applications. Already have 0.7 or later? Choose **Install $VERSION** in ThingsBar's Settings: it updates and reopens itself."
+          if [[ "$NOTARIZED" == "true" ]]; then
+            GATEKEEPER="Signed with Developer ID and notarized by Apple."
+          else
+            GATEKEEPER="Not notarized yet: on first launch, open System Settings → Privacy & Security and click **Open Anyway**."
+          fi
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "ThingsBar ${GITHUB_REF_NAME#v}" \
+            --title "ThingsBar $VERSION" \
             --generate-notes \
-            --notes "Download **ThingsBar-${GITHUB_REF_NAME#v}.dmg**, open it and drag ThingsBar to Applications. The app is not notarized: on first launch, open System Settings → Privacy & Security and click **Open Anyway**. Requires macOS 14+ and Things 3."
+            --notes "$INSTALL $GATEKEEPER Requires macOS 14+ and Things 3."

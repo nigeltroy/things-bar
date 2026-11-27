@@ -65,6 +65,13 @@ final class PanelController: NSObject {
             glass.style = .regular
             glass.cornerRadius = Theme.panelCorner
             glass.contentView = content
+            // The glass draws a faint halo out to its rectangular bounds. The window server
+            // takes that as the window's shape and draws a sharp-cornered rim and shadow
+            // around it, so clip the glass to its own rounded shape.
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = Theme.panelCorner
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             return glass
         }
         let fx = NSVisualEffectView()
@@ -150,10 +157,8 @@ final class PanelController: NSObject {
         refreshShadow()
     }
 
-    /// The window server takes a borderless window's shadow (and its thin dark rim) from
-    /// the pixels drawn at the time. Taken before the glass has drawn its rounded corners,
-    /// it's the full rectangle: a sharp-cornered border around the panel. Recompute it
-    /// once the new content has drawn.
+    /// The window server takes a borderless window's shadow from the pixels drawn at the
+    /// time; recompute it once new content (a new height, a new page) has drawn.
     private func refreshShadow() {
         panel.invalidateShadow()
         DispatchQueue.main.async { [weak self] in

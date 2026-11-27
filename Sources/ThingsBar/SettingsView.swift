@@ -393,9 +393,9 @@ struct UpdateRows: View {
             case .checking:
                 ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 16, height: 16)
             case .available(let release):
-                Button("Download \(release.version)") { UpdateActions.download(release) }
+                Button("Install \(release.version)") { UpdateActions.install(release) }
                     .buttonStyle(SoftButtonStyle(prominent: true))
-                    .help("Opens the ThingsBar \(release.version) disk image in your browser")
+                    .help("Downloads ThingsBar \(release.version), then quits, replaces and reopens ThingsBar")
             case .upToDate:
                 Text("Up to date").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             case .failed:
@@ -406,7 +406,7 @@ struct UpdateRows: View {
         }
         .accessibilityAddTraits(.isButton)
         if case .available(let release) = updates.status {
-            Note(text: "ThingsBar \(release.version) is available (you have \(updates.currentVersion)). Open the disk image, quit ThingsBar, then drag the new one to Applications.")
+            Note(text: "ThingsBar \(release.version) is available (you have \(updates.currentVersion)). Install downloads it, then quits ThingsBar, replaces it and reopens it.")
         } else if case .failed(let message) = updates.status {
             Note(text: "Couldn't check for updates. \(message)")
         }
@@ -416,8 +416,16 @@ struct UpdateRows: View {
 
 @MainActor
 enum UpdateActions {
+    /// Installs in place (Sparkle), set up by the app delegate. Nil in self-tests.
+    @MainActor static var installer: ((ReleaseInfo) -> Void)?
+
+    /// Downloads, quits, replaces ThingsBar and reopens it; the browser if that's unavailable.
+    @MainActor static func install(_ release: ReleaseInfo) {
+        if let installer { installer(release) } else { openInBrowser(release) }
+    }
+
     /// Opens the DMG (the browser downloads it), or the release page if there's none.
-    static func download(_ release: ReleaseInfo) {
+    static func openInBrowser(_ release: ReleaseInfo) {
         NSWorkspace.shared.open(release.downloadURL ?? release.pageURL)
     }
 }

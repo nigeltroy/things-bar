@@ -198,7 +198,7 @@ struct FooterStatus: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 4)))
-                .help("Open Settings to download the update")
+                .help("Open Settings to install the update")
             } else if store.canReorder && store.visibleItems.count > 1 && state.opens <= Self.hintOpens {
                 label("Drag to reorder")
             } else if let last = store.lastRefresh {
@@ -531,7 +531,7 @@ struct TodoRow: View {
                     .strikethrough(checked, color: Theme.textMuted)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                MetaLine(item: item, catalog: store.catalog)
+                MetaLine(item: item, catalog: store.catalog, source: store.settings.source)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             // Fade the text's end under the hover actions instead of reflowing it.
@@ -635,9 +635,11 @@ struct Checkbox: View {
 struct MetaLine: View {
     let item: TodoItem
     let catalog: SourceCatalog
+    /// The list being shown: its own name isn't repeated under each to-do.
+    let source: ThingsSource
 
     var body: some View {
-        let parent = catalog.projectName(for: item.projectID) ?? catalog.areaName(for: item.areaID)
+        let parent = catalog.parentName(for: item, listedFrom: source)
         if parent != nil || item.deadline != nil || !item.tags.isEmpty || !item.notes.isEmpty {
             // Where it lives, how it's labelled, then when it's due (Things also puts
             // the deadline last). Tags read as #tags so they can't pass for a project.

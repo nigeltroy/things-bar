@@ -11,7 +11,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.6.2</string>
+	<string>0.7.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -31,5 +31,13 @@
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>ThingsBar reads and updates your Things 3 to-dos.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/nigeltroy/things-bar/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>VpeLwJqZaoCRLVrD7Q2LUgRIHUNnt/qhYtIevKGPdFI=</string>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

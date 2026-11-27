@@ -227,7 +227,7 @@ enum SelfTest {
             await d.updates.check()
             let after = d.makeQuickMenu().items.map(\.title)
             return before.contains("Check for Updates…") && d.updates.available?.version == "9.9.0"
-                && after.contains("Download ThingsBar 9.9.0…")
+                && after.contains("Install ThingsBar 9.9.0…")
         })
         out.append(contentsOf: await tokenGateSteps(d))
         return out
@@ -246,10 +246,13 @@ enum SelfTest {
             let keys = ListKeys.handle(keyCode: 125, modifiers: [], store: s, state: d.panelState)
             d.showPanel(); try? await Task.sleep(for: .milliseconds(300))
             let panelHeight = d.panel.panel.frame.height
+            try? await Task.sleep(for: .milliseconds(500))
+            let corner = cornerAlpha(of: d.panel.panel)
             d.panel.close()
-            NSLog("gate: menu %@, keys handled %d, panel height %.0f", menu.description, keys ? 1 : 0, panelHeight)
+            NSLog("gate: menu %@, keys handled %d, panel height %.0f, corner alpha %d", menu.description, keys ? 1 : 0, panelHeight, corner ?? -1)
             return d.statusItem.button?.title == "ThingsBar" && d.statusItem.button?.image == nil
                 && menu == ["Enter Things Auth Token…", "---", "Quit ThingsBar"] && !keys && panelHeight < 200
+                && (corner ?? 0) < 60 // no sharp-cornered rim around the rounded panel
         })
         out.append(await step("wrong token is rejected and not saved", d) {
             let error = await TokenGate.submit("wrong-token", store: s, tokenStore: d.tokenStore, state: d.panelState)
@@ -392,6 +395,28 @@ enum SelfTest {
     /// opaque backdrop so transparent areas are visible.
     /// Key-capable, so system controls (switches) render in their active colors.
     private final class KeyWindow: NSWindow { override var canBecomeKey: Bool { true } }
+
+    /// The alpha of the window server's composite (shadow included) at the panel's top-left
+    /// corner, outside the rounded glass: high means a sharp-cornered rim is drawn there.
+    /// Capturing your own window needs no Screen Recording permission. The call is looked
+    /// up at run time because the SDK no longer exposes it to Swift.
+    static func cornerAlpha(of window: NSWindow) -> Int? {
+        typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let create = unsafeBitCast(sym, to: CreateImage.self)
+        let includingWindow: UInt32 = 1 << 3
+        guard let image = create(.null, includingWindow, UInt32(window.windowNumber), 0)?.takeRetainedValue() else { return nil }
+        let scale = window.backingScaleFactor
+        let rep = NSBitmapImageRep(cgImage: image)
+        // The capture includes the shadow margin; the window sits centered horizontally in it,
+        // and its top edge is the first fully opaque row in the middle column.
+        let x = Int(((CGFloat(rep.pixelsWide) - window.frame.width * scale) / 2).rounded())
+        guard x >= 0 else { return nil }
+        for y in 0..<rep.pixelsHigh where (rep.colorAt(x: rep.pixelsWide / 2, y: y)?.alphaComponent ?? 0) > 0.95 {
+            return Int(((rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) * 255).rounded())
+        }
+        return nil
+    }
 
     static func snapshot<V: View>(_ view: V, to url: URL, dark: Bool = true) {
         let host = NSHostingView(rootView: view)

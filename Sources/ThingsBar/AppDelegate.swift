@@ -11,17 +11,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var panel: PanelController!
     private(set) var updates: UpdateChecker!
     private var updateTimer: Timer?
+    private var sparkleUpdater: SparkleUpdater?
     private var tokenVerifier: TokenVerifier?
     private var refreshTimer: Timer?
     private var changeTimer: Timer?
     private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
+        // Self-tests and update tests never read your saved token (and so never Things).
+        tokenStore = SelfTest.isActive || SparkleUpdater.isUpdateTest ? MemoryTokenStore() : KeychainTokenStore()
         store = SelfTest.isActive ? SelfTest.makeStore(tokenStore: tokenStore) : Self.makeLiveStore(tokenStore: tokenStore)
         store.hasAuthToken = tokenStore.token != nil
         let menuBarFont = NSFont.menuBarFont(ofSize: 0)
         updates = SelfTest.isActive ? SelfTest.makeUpdateChecker() : UpdateChecker()
+        if !SelfTest.isActive {
+            let sparkle = SparkleUpdater()
+            sparkleUpdater = sparkle
+            UpdateActions.installer = { sparkle.install($0) }
+        }
         if SelfTest.isActive && !SelfTest.useLiveThings {
             panelState.verifyToken = { $0 == "fixture-token" ? .valid : .invalid(TokenCheck.rejected) }
         } else {
@@ -209,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Refresh", action: #selector(refreshNow), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         if let release = updates.available {
-            menu.addItem(withTitle: "Download ThingsBar \(release.version)…", action: #selector(downloadUpdate), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Install ThingsBar \(release.version)…", action: #selector(installUpdate), keyEquivalent: "").target = self
         } else {
             menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
         }
@@ -229,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func revealTop() { if let top = store.topItem { Task { await store.reveal(top) } } }
     @objc private func refreshNow() { Task { await store.refresh() } }
 
-    @objc private func downloadUpdate() { if let r = updates.available { UpdateActions.download(r) } }
+    @objc private func installUpdate() { if let r = updates.available { UpdateActions.install(r) } }
 
     /// Shows the result where the button lives: Settings, inside the panel.
     @objc private func checkForUpdates() {
