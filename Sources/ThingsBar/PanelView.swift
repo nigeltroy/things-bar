@@ -16,6 +16,12 @@ final class PanelState {
     var opens = 0
     /// Briefly set after a drop so the moved row flashes.
     var justMovedID: String?
+    /// Rows whose notes are shown in the list.
+    var expandedNotes: Set<String> = []
+
+    func toggleNotes(_ id: String) {
+        if expandedNotes.contains(id) { expandedNotes.remove(id) } else { expandedNotes.insert(id) }
+    }
     /// Shown on the token prompt when Things stopped accepting the saved token.
     var gateMessage: String?
     /// Asks Things whether a token is valid (set by the app; self-tests use a fixture).
@@ -292,7 +298,8 @@ struct TodoListView: View {
                                 selected: state.selectedID == item.id,
                                 hoverChanged: { inside in
                                     if inside { state.selectedID = item.id } else if state.selectedID == item.id { state.selectedID = nil }
-                                })
+                                },
+                                state: state)
                         .opacity(draggingID == item.id ? 0.4 : 1)
                         .modifier(Draggable(enabled: store.canReorder && state.editingID == nil && !store.pendingIDs.contains(item.id),
                                             item: item, begin: { begin(item) }))
@@ -512,37 +519,49 @@ struct TodoRow: View {
     var hoverChanged: (Bool) -> Void = { _ in }
     /// Self-test only: render the hover state without a mouse.
     var forceHover = false
+    /// Shows the notes under the title (`state.expandedNotes`); nil in self-test renders.
+    var state: PanelState?
     @State private var hoveringState = false
     @State private var checked = false
+
+    private var notesExpanded: Bool { !item.notes.isEmpty && (state?.expandedNotes.contains(item.id) ?? false) }
+    private func toggleNotes() {
+        withAnimation(Theme.motion(.snappy(duration: 0.18))) { state?.toggleNotes(item.id) }
+    }
 
     private var hovering: Bool { hoveringState || forceHover || selected }
     private var pending: Bool { store.pendingIDs.contains(item.id) }
     private static let actionsWidth: CGFloat = 52
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Checkbox(checked: checked) { completeWithBeat() }
-                .disabled(pending)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title.isEmpty ? "Untitled" : item.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(checked ? Theme.textMuted : Theme.textPrimary)
-                    .strikethrough(checked, color: Theme.textMuted)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                MetaLine(item: item, catalog: store.catalog, source: store.settings.source)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Fade the text's end under the hover actions instead of reflowing it.
-            .mask(alignment: .trailing) {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    LinearGradient(colors: [.black, .black.opacity(hovering ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: 24)
-                    Rectangle().fill(.black.opacity(hovering ? 0 : 1)).frame(width: Self.actionsWidth - 16)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 9) {
+                Checkbox(checked: checked) { completeWithBeat() }
+                    .disabled(pending)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title.isEmpty ? "Untitled" : item.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(checked ? Theme.textMuted : Theme.textPrimary)
+                        .strikethrough(checked, color: Theme.textMuted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source,
+                             notesExpanded: notesExpanded, toggleNotes: { toggleNotes() })
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Fade the text's end under the hover actions instead of reflowing it.
+                .mask(alignment: .trailing) {
+                    HStack(spacing: 0) {
+                        Rectangle()
+                        LinearGradient(colors: [.black, .black.opacity(hovering ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 24)
+                        Rectangle().fill(.black.opacity(hovering ? 0 : 1)).frame(width: Self.actionsWidth - 16)
+                    }
                 }
             }
+            // Below the title and outside the fade, so the actions never cover the notes.
+            if notesExpanded { NotesText(notes: item.notes) }
         }
         .padding(.horizontal, Theme.textInset).padding(.vertical, 6)
         .frame(minHeight: 30)
@@ -568,12 +587,13 @@ struct TodoRow: View {
         .onHover { h in withAnimation(Theme.hoverAnimation) { hoveringState = h }; hoverChanged(h) }
         .onTapGesture(count: 2, perform: edit)
         .contextMenu { TodoActions(store: store, item: item, edit: edit) }
-        .help(item.notes)
+        .help(notesExpanded ? "" : item.notes)
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue)
         .accessibilityActions {
             Button("Complete") { Task { await store.complete(item) } }
             Button("Edit", action: edit)
+            if !item.notes.isEmpty { Button(notesExpanded ? "Hide Notes" : "Show Notes") { toggleNotes() } }
             if store.canReorder, let i = store.visibleItems.firstIndex(of: item) {
                 if i > 0 {
                     Button("Move Up") { store.moveVisible(item, to: i - 1) }
@@ -637,6 +657,9 @@ struct MetaLine: View {
     let catalog: SourceCatalog
     /// The list being shown: its own name isn't repeated under each to-do.
     let source: ThingsSource
+    var notesExpanded = false
+    /// Shows or hides the notes; nil draws a plain notes glyph.
+    var toggleNotes: (() -> Void)?
 
     var body: some View {
         let parent = catalog.parentName(for: item, listedFrom: source)
@@ -651,8 +674,12 @@ struct MetaLine: View {
                     Text(item.tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.textMuted).lineLimit(1)
                 }
                 if !item.notes.isEmpty {
-                    Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
-                        .accessibilityLabel("Has notes")
+                    if let toggleNotes {
+                        NotesToggle(expanded: notesExpanded, action: toggleNotes)
+                    } else {
+                        Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
+                            .accessibilityLabel("Has notes")
+                    }
                 }
                 if let deadline = item.deadline {
                     let overdue = DeadlineFormat.isOverdue(deadline)
@@ -666,6 +693,50 @@ struct MetaLine: View {
             .font(.system(size: 11))
             .labelStyle(CompactLabelStyle())
         }
+    }
+}
+
+/// "Notes" with a chevron: shows the to-do's notes in the list. Fixed size, so the
+/// meta line never moves when it flips.
+struct NotesToggle: View {
+    let expanded: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "text.alignleft").font(.system(size: 9, weight: .medium))
+                Text("Notes")
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+            .foregroundStyle(hovering || expanded ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Capsule().fill(hovering ? Theme.hoverFill : Theme.fieldFill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(FocusRingButtonStyle(shape: Capsule()))
+        .fixedSize()
+        .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
+        .help(expanded ? "Hide notes (←)" : "Show notes (→)")
+        .accessibilityLabel(expanded ? "Hide notes" : "Show notes")
+    }
+}
+
+/// A to-do's notes, shown in the list under its title.
+struct NotesText: View {
+    let notes: String
+    var body: some View {
+        Text(verbatim: notes.trimmingCharacters(in: .whitespacesAndNewlines))
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textSecondary)
+            .lineSpacing(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 25) // under the title: 16 pt checkbox + 9 pt gap
+            .padding(.trailing, 4)
+            .transition(.opacity)
     }
 }
 
@@ -926,6 +997,12 @@ enum ListKeys {
             let item = items[i]
             state.selectedID = i + 1 < items.count ? items[i + 1].id : (i > 0 ? items[i - 1].id : nil)
             Task { await store.complete(item) }
+            return true
+        case (124, []), (123, []): // → / ←: show or hide the notes
+            guard let i = index, !items[i].notes.isEmpty else { return false }
+            let show = keyCode == 124
+            guard show != state.expandedNotes.contains(items[i].id) else { return true }
+            withAnimation(Theme.motion(.snappy(duration: 0.18))) { state.toggleNotes(items[i].id) }
             return true
         case (36, []), (76, []): // Return / Enter: edit
             guard let i = index else { return false }

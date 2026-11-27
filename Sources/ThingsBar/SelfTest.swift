@@ -82,6 +82,7 @@ enum SelfTest {
             report["statusItemHasImage"] = delegate.statusItem.button?.image != nil
             write(json: report, to: dir.appendingPathComponent("status.json"))
             renderViews(delegate, dir)
+            await renderNotes(dir)
             ContrastAudit.run(store: store(delegate), dir: dir) // writes contrast.json
 
             var steps: [[String: Any]] = []
@@ -159,6 +160,23 @@ enum SelfTest {
         snapshot(GlassPreview {
             ErrorBanner(message: ThingsError.changeNotApplied.errorDescription!) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
         }, to: dir.appendingPathComponent("error.png"))
+    }
+
+    /// A row with its notes shown, and one with them hidden.
+    static func renderNotes(_ dir: URL) async {
+        let items = [
+            TodoItem(id: "n1", title: "Borrow from the line of credit to top up the RRSP",
+                     notes: "Check the contribution room first.\nTransfer before the deadline, then file.", tags: ["Money"]),
+            TodoItem(id: "n2", title: "Book the dentist", notes: "Ask about the cleaning"),
+        ]
+        let store = TodoStore(client: InMemoryThingsClient(items: [.today: items]), persistence: ephemeralSettings())
+        store.hasAuthToken = true
+        let state = PanelState(); state.expandedNotes = ["n1"]
+        await store.refresh()
+        for (name, dark) in [("notes.png", true), ("notes-light.png", false)] {
+            snapshot(GlassPreview { TodoListView(store: store, state: state).frame(width: Theme.panelWidth) },
+                     to: dir.appendingPathComponent(name), dark: dark)
+        }
     }
 
     /// The Settings update rows and the list footer, in dark and light.
