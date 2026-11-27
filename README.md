@@ -49,7 +49,7 @@ Download the latest `ThingsBar-<version>.dmg` from the repository's
 Until releases are signed with a Developer ID (see [Signing](#signing-and-notarization)),
 the app is ad-hoc signed and not notarized, so macOS blocks the first launch. Open
 **System Settings → Privacy & Security**, scroll to the message about ThingsBar and
-click **Open Anyway**. Later versions install from inside ThingsBar (0.7 and up), so
+click **Open Anyway**. Later versions install from inside ThingsBar (0.9.1 and up), so
 you only do this once.
 
 ## Build from source

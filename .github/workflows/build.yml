@@ -207,7 +207,7 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           test -s dist/appcast.xml # installed copies update from it
-          INSTALL="Download **ThingsBar-$VERSION.dmg**, open it and drag ThingsBar to Applications. Already have 0.7 or later? Choose **Install $VERSION** in ThingsBar's Settings: it updates and reopens itself."
+          INSTALL="Download **ThingsBar-$VERSION.dmg**, open it and drag ThingsBar to Applications. Already have 0.9.1 or later? Choose **Install $VERSION** in ThingsBar's Settings: it updates and reopens itself."
           if [[ "$NOTARIZED" == "true" ]]; then
             GATEKEEPER="Signed with Developer ID and notarized by Apple."
           else
