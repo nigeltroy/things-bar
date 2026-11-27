@@ -50,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return handled ? nil : event
         }
 
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panelState.displayOptionsVersion += 1 }
+        }
+
         observeTitle()
         observeRefreshInterval()
         observeAppearance()

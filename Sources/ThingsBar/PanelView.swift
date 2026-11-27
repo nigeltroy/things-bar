@@ -10,6 +10,8 @@ final class PanelState {
     /// The highlighted row, as in a menu: set by the pointer and by ↑/↓. Target of
     /// Space (complete), Return (edit), ⌘⌫ (trash) and ⌘↑/⌘↓ (move).
     var selectedID: String?
+    /// Bumped when accessibility display options change, so colors re-resolve.
+    var displayOptionsVersion = 0
     /// How many times the panel has been opened (hints show only for the first few).
     var opens = 0
     /// Briefly set after a drop so the moved row flashes.
@@ -53,10 +55,12 @@ struct PanelView: View {
         }
         .frame(width: Theme.panelWidth)
         .fixedSize(horizontal: false, vertical: true)
+        .id(state.displayOptionsVersion) // Increase Contrast toggled: redraw with new tokens
         .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: state.route)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in sizeChanged() }
         .background(KeyboardShortcuts(store: store, state: state))
         .focusEffectDisabled() // no blue focus rings anywhere in the grayscale panel
+        .overlay { RoundedRectangle(cornerRadius: Theme.panelCorner).strokeBorder(Theme.panelBorder, lineWidth: 1).allowsHitTesting(false) }
     }
 
     private func pageTransition(edge: Edge) -> AnyTransition {

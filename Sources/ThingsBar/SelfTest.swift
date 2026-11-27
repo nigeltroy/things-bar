@@ -107,6 +107,10 @@ enum SelfTest {
         }
         snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings.png"))
         snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings-light.png"), dark: false)
+        Theme.forceIncreaseContrast = true
+        snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel-contrast.png"))
+        snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel-contrast-light.png"), dark: false)
+        Theme.forceIncreaseContrast = false
         if let first = store.visibleItems.first {
             snapshot(GlassPreview {
                 VStack(spacing: 0) {
