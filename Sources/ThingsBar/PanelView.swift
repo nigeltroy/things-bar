@@ -9,6 +9,8 @@ final class PanelState {
     var editingID: String?
     /// The row under the pointer: target of ⌘↑/⌘↓ shortcuts.
     var hoveredID: String?
+    /// How many times the panel has been opened (hints show only for the first few).
+    var opens = 0
     /// Briefly set after a drop so the moved row flashes.
     var justMovedID: String?
 
@@ -52,6 +54,7 @@ struct PanelView: View {
         .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: state.route)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in sizeChanged() }
         .background(KeyboardShortcuts(store: store, state: state))
+        .focusEffectDisabled() // no blue focus rings anywhere in the grayscale panel
     }
 
     private func pageTransition(edge: Edge) -> AnyTransition {
@@ -122,10 +125,12 @@ struct ListPage: View {
                     .help("Filters are on")
             }
             Spacer()
+            if !store.visibleItems.isEmpty {
             Text("\(store.visibleItems.count)")
                 .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(Theme.textTertiary)
+                .foregroundStyle(Theme.textMuted)
                 .help("\(store.visibleItems.count) to-dos")
+            }
             IconButton(systemName: "gearshape", help: "Settings (⌘,)") { state.route = .settings }
         }
         .padding(.leading, Theme.edgeInset + Theme.textInset).padding(.trailing, Theme.edgeInset + 2)
@@ -134,25 +139,62 @@ struct ListPage: View {
 
     private var footer: some View {
         HStack(spacing: 2) {
-            Text(statusText)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .contentTransition(.opacity)
+            FooterStatus(store: store, state: state)
             Spacer()
             IconButton(systemName: "arrow.up.forward.app", help: "Open Things", action: openThings)
-            IconButton(systemName: "power", help: "Quit ThingsBar (⌘Q)") { NSApplication.shared.terminate(nil) }
         }
         .padding(.leading, Theme.edgeInset + Theme.textInset).padding(.trailing, Theme.edgeInset + 2)
         .padding(.vertical, 5)
     }
+}
 
-    private var statusText: String {
-        if store.isSyncingOrder || store.hasPendingOrder { return "Saving order to Things…" }
-        if store.orderJustSaved { return "Order saved in Things" }
-        if store.isLoading && store.lastRefresh == nil { return "Reading Things…" }
-        if store.canReorder { return "Drag to reorder" }
-        return store.reorderUnavailableReason ?? "Synced with Things"
+/// One quiet line: what's happening now, a fix-it button, a hint for new users,
+/// or when the list was last read from Things.
+struct FooterStatus: View {
+    let store: TodoStore
+    let state: PanelState
+    static let hintOpens = 5
+
+    var body: some View {
+        Group {
+            if store.isSyncingOrder || store.hasPendingOrder {
+                label("Saving order to Things…")
+            } else if store.orderJustSaved {
+                label("Order saved in Things")
+            } else if store.isLoading && store.lastRefresh == nil {
+                label("Reading Things…")
+            } else if store.settings.source == .today && !store.hasAuthToken && store.visibleItems.count > 1 {
+                Button { state.route = .settings } label: {
+                    HStack(spacing: 2) {
+                        Text("Add auth token to reorder")
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusEffectDisabled()
+                .help("Open Settings to add your Things auth token")
+            } else if store.canReorder && store.visibleItems.count > 1 && state.opens <= Self.hintOpens {
+                label("Drag to reorder")
+            } else if let last = store.lastRefresh {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    label(Self.updated(last, now: context.date))
+                }
+            }
+        }
+        .lineLimit(1)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+    }
+
+    static func updated(_ date: Date, now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "Updated just now" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return "Updated " + f.localizedString(for: date, relativeTo: now)
     }
 }
 
@@ -193,6 +235,7 @@ struct TodoListView: View {
                 }
                 .coordinateSpace(name: Self.viewport)
                 .scrollIndicators(.automatic)
+                .modifier(SoftScrollEdges())
                 .frame(maxHeight: 440)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
@@ -329,7 +372,7 @@ private struct Draggable: ViewModifier {
                 return NSItemProvider(object: "thingsbar-todo:\(item.id)" as NSString)
             } preview: {
                 HStack(spacing: 9) {
-                    Circle().strokeBorder(Theme.textTertiary, lineWidth: 1.25).frame(width: 16, height: 16)
+                    Circle().strokeBorder(Theme.textSecondary, lineWidth: 1.5).frame(width: 16, height: 16)
                     Text(item.title.isEmpty ? "Untitled" : item.title).font(.system(size: 13)).lineLimit(1)
                 }
                 .padding(.horizontal, 10).frame(width: Theme.panelWidth - 40, height: 30, alignment: .leading)
@@ -346,10 +389,14 @@ struct EmptyStateView: View {
     let filtered: Bool
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: loading ? "ellipsis" : "checkmark")
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(Theme.textTertiary)
-            Text(loading ? "Reading Things…" : filtered ? "No to-dos match your filters" : "Nothing to do here")
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: filtered ? "line.3.horizontal.decrease" : "checkmark")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Text(loading ? "Reading Things…" : filtered ? "No to-dos match your filters" : MenuBarTitle.emptyTitle)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textSecondary)
         }
@@ -370,9 +417,9 @@ struct AddTodoField: View {
         HStack(spacing: 8) {
             Image(systemName: "plus")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(focused ? Theme.textPrimary : Theme.textTertiary)
+                .foregroundStyle(focused ? Theme.textPrimary : Theme.textMuted)
                 .frame(width: 16)
-            TextField("", text: $title, prompt: Text("New To-Do").foregroundStyle(Theme.textTertiary))
+            TextField("", text: $title, prompt: Text("New To-Do").foregroundStyle(Theme.textMuted))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textPrimary)
@@ -383,7 +430,9 @@ struct AddTodoField: View {
             if store.isAdding {
                 ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 16, height: 16)
             } else if !title.isEmpty {
-                Text("↩").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+                Text("↩").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            } else if !focused {
+                Text("⌘N").font(.system(size: 11)).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
             }
             Button("") { focused = true }
                 .keyboardShortcut("n", modifiers: .command)
@@ -436,8 +485,8 @@ struct TodoRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title.isEmpty ? "Untitled" : item.title)
                     .font(.system(size: 13, weight: isTop ? .semibold : .regular))
-                    .foregroundStyle(checked ? Theme.textTertiary : Theme.textPrimary)
-                    .strikethrough(checked, color: Theme.textTertiary)
+                    .foregroundStyle(checked ? Theme.textMuted : Theme.textPrimary)
+                    .strikethrough(checked, color: Theme.textMuted)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 MetaLine(item: item, catalog: store.catalog)
@@ -479,10 +528,26 @@ struct TodoRow: View {
         .contextMenu { TodoActions(store: store, item: item, edit: edit) }
         .help(item.notes)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(accessibilityValue)
         .accessibilityActions {
             Button("Complete") { Task { await store.complete(item) } }
             Button("Edit", action: edit)
+            if store.canReorder, let i = store.visibleItems.firstIndex(of: item) {
+                if i > 0 {
+                    Button("Move Up") { store.moveVisible(item, to: i - 1) }
+                    Button("Move to Top") { store.moveVisible(item, to: 0) }
+                }
+                if i < store.visibleItems.count - 1 { Button("Move Down") { store.moveVisible(item, to: i + 1) } }
+            }
+            Button("Move to Trash") { Task { await store.delete(item) } }
         }
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        if let i = store.visibleItems.firstIndex(of: item), i < store.settings.menuBarItemCount { parts.append("In menu bar") }
+        if let d = item.deadline { parts.append(DeadlineFormat.isOverdue(d) ? "Overdue, \(DeadlineFormat.string(d))" : "Deadline \(DeadlineFormat.string(d))") }
+        return parts.joined(separator: ", ")
     }
 
     /// Show the check for a moment so the completion is visible, then complete.
@@ -504,13 +569,13 @@ struct Checkbox: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().strokeBorder(checked || hovering ? Theme.textSecondary : Theme.textTertiary, lineWidth: 1.25)
+                Circle().strokeBorder(checked || hovering ? Theme.textPrimary : Theme.textSecondary, lineWidth: 1.5)
                 if checked {
                     Circle().fill(Theme.textPrimary)
                     Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
                         .foregroundStyle(Color(nsColor: .windowBackgroundColor))
                 } else if hovering {
-                    Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.textTertiary)
+                    Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.textSecondary)
                 }
             }
             .frame(width: 16, height: 16)
@@ -542,10 +607,10 @@ struct MetaLine: View {
                     Text(parent).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 if !item.tags.isEmpty {
-                    Text(item.tags.joined(separator: " · ")).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Text(item.tags.joined(separator: " · ")).foregroundStyle(Theme.textMuted).lineLimit(1)
                 }
                 if !item.notes.isEmpty {
-                    Image(systemName: "text.alignleft").font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
+                    Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
                 }
             }
             .font(.system(size: 11))
@@ -556,7 +621,7 @@ struct MetaLine: View {
 
 struct CompactLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 3) { configuration.icon.font(.system(size: 8)); configuration.title }
+        HStack(spacing: 3) { configuration.icon.font(.system(size: 9, weight: .medium)); configuration.title }
     }
 }
 
@@ -621,10 +686,12 @@ struct TodoActions: View {
             let index = store.visibleItems.firstIndex(of: item) ?? 0
             let last = store.visibleItems.count - 1
             Divider()
-            Button("Move to Top") { move(to: 0) }.disabled(index == 0)
-            Button("Move Up") { move(to: index - 1) }.disabled(index == 0)
-            Button("Move Down") { move(to: index + 1) }.disabled(index >= last)
-            Button("Move to Bottom") { move(to: last) }.disabled(index >= last)
+            // Shortcut glyphs are spelled out in the titles: attaching real shortcuts to
+            // these per-row menus could register one per row.
+            Button("Move to Top  ⌥⌘↑") { move(to: 0) }.disabled(index == 0)
+            Button("Move Up  ⌘↑") { move(to: index - 1) }.disabled(index == 0)
+            Button("Move Down  ⌘↓") { move(to: index + 1) }.disabled(index >= last)
+            Button("Move to Bottom  ⌥⌘↓") { move(to: last) }.disabled(index >= last)
         }
         Divider()
         Menu("When") {
@@ -666,15 +733,16 @@ struct TodoEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.textTertiary))
+            TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.textMuted))
                 .textFieldStyle(.plain).font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary).focused($titleFocused)
-            TextField("", text: $notes, prompt: Text("Notes").foregroundStyle(Theme.textTertiary), axis: .vertical)
+            TextField("", text: $notes, prompt: Text("Notes").foregroundStyle(Theme.textMuted), axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1...6)
             HStack(spacing: 8) {
                 Toggle(isOn: $hasDeadline) { Text("Deadline") }
                     .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .tint(Theme.textSecondary)
                 if hasDeadline {
                     DatePicker("", selection: $deadline, displayedComponents: .date)
                         .labelsHidden().datePickerStyle(.field).controlSize(.small)

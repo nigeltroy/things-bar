@@ -25,14 +25,16 @@ struct SettingsPage: View {
                     filterSection
                     generalSection
                     thingsSection
+                    keyboardSection
                     Text("ThingsBar \(ThingsBarInfo.version)")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                         .padding(.vertical, 12)
                 }
                 .padding(.horizontal, Theme.edgeInset)
             }
             .frame(maxHeight: 500)
             .fixedSize(horizontal: false, vertical: true)
+            .modifier(SoftScrollEdges())
         }
         .task { await store.refresh() }
         .onAppear { tokenDraft = tokenStore.token ?? "" }
@@ -115,7 +117,7 @@ struct SettingsPage: View {
             SettingsToggle("Only with a deadline", isOn: $store.settings.filter.onlyWithDeadline)
             SettingsToggle("Hide scheduled for later", isOn: $store.settings.filter.hideScheduledLater)
             SettingsRow("Contains") {
-                TextField("", text: $store.settings.filter.searchText, prompt: Text("Any text").foregroundStyle(Theme.textTertiary))
+                TextField("", text: $store.settings.filter.searchText, prompt: Text("Any text").foregroundStyle(Theme.textMuted))
                     .textFieldStyle(.plain).font(.system(size: 12)).multilineTextAlignment(.trailing)
                     .frame(width: 130)
                     .modifier(ValueChip())
@@ -157,6 +159,10 @@ struct SettingsPage: View {
             SettingsToggle("Open at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, on in setLaunchAtLogin(on) }
             if let loginError { Note(text: loginError) }
+            SettingsRow("Quit ThingsBar", onLabelTap: { NSApplication.shared.terminate(nil) }) {
+                Text("⌘Q").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+            .accessibilityAddTraits(.isButton)
         }
     }
 
@@ -173,7 +179,7 @@ struct SettingsPage: View {
     private var thingsSection: some View {
         SettingsSection("Things auth token") {
             HStack(spacing: 6) {
-                SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textTertiary))
+                SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textMuted))
                     .textFieldStyle(.plain).font(.system(size: 12))
                     .padding(.horizontal, 8).frame(height: 24)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
@@ -186,6 +192,21 @@ struct SettingsPage: View {
             Note(text: tokenMessage ?? (store.hasAuthToken
                 ? "Saved in your Keychain. Needed to edit, schedule and reorder Today."
                 : "Needed to edit, schedule and reorder Today. In Things: Settings → General → Enable Things URLs → Manage."))
+        }
+    }
+
+    private var keyboardSection: some View {
+        SettingsSection("Keyboard") {
+            ForEach([("New to-do", "⌘N"), ("Move to-do under the pointer", "⌘↑  ⌘↓"), ("Move to top or bottom", "⌥⌘↑  ⌥⌘↓"),
+                     ("Edit", "Double-click"), ("Settings", "⌘,"), ("Back or close", "Esc")], id: \.0) { label, keys in
+                HStack {
+                    Text(label).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text(keys).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                }
+                .padding(.horizontal, Theme.textInset).frame(height: 22)
+                .accessibilityElement(children: .combine)
+            }
         }
     }
 
@@ -219,14 +240,23 @@ struct SettingsSection<Content: View>: View {
 /// Label on the left, control on the right, 30 pt tall, hover fill only.
 struct SettingsRow<Control: View>: View {
     let label: String
+    var onLabelTap: (() -> Void)?
     @ViewBuilder let control: Control
     @State private var hovering = false
-    init(_ label: String, @ViewBuilder control: () -> Control) { self.label = label; self.control = control() }
+    init(_ label: String, onLabelTap: (() -> Void)? = nil, @ViewBuilder control: () -> Control) {
+        self.label = label; self.onLabelTap = onLabelTap; self.control = control()
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            Spacer(minLength: 8)
+            // Only the label area is a tap target, so clicking the control itself
+            // (e.g. a switch) is handled once, by the control.
+            HStack {
+                Text(label).font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onLabelTap?() }
             control
         }
         .padding(.horizontal, Theme.textInset).frame(minHeight: 30)
@@ -241,12 +271,11 @@ struct SettingsToggle: View {
     init(_ label: String, isOn: Binding<Bool>) { self.label = label; self._isOn = isOn }
 
     var body: some View {
-        SettingsRow(label) {
-            Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
-                .tint(Color(nsColor: .secondaryLabelColor))
+        SettingsRow(label, onLabelTap: { isOn.toggle() }) {
+            Toggle(label, isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                .tint(Theme.textSecondary)
+                .focusEffectDisabled()
         }
-        .contentShape(Rectangle())
-        .onTapGesture { isOn.toggle() }
     }
 }
 
@@ -268,7 +297,7 @@ struct Note: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Theme.textInset).padding(.vertical, 3)
@@ -295,5 +324,16 @@ struct HoverFillButtonStyle: ButtonStyle {
         configuration.label
             .background(RoundedRectangle(cornerRadius: 6).fill(configuration.isPressed ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
             .onHover { hovering = $0 }
+    }
+}
+
+/// Tahoe's soft fade where content scrolls under the panel's edges (macOS 26+).
+struct SoftScrollEdges: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            content
+        }
     }
 }

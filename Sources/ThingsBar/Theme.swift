@@ -9,9 +9,13 @@ import ThingsBarCore
 /// and fills, never from hue.
 enum Theme {
     static let textPrimary = Color.primary
-    static let textSecondary = Color.secondary
+    /// Meta text (projects, deadlines, values): about 5.5:1 dark, 6.5:1 light on glass.
+    static let textSecondary = gray(dark: 0.68, light: 0.66)
+    /// Quiet text (tags, footer, notes, placeholders): the faintest text that still
+    /// reaches WCAG's 4.5:1 for small text over glass.
+    static let textMuted = gray(dark: 0.56, light: 0.57)
+    /// Decorative glyphs only, never text.
     static let textTertiary = Color(nsColor: .tertiaryLabelColor)
-    static let textQuaternary = Color(nsColor: .quaternaryLabelColor)
     static let separator = Color.primary.opacity(0.08)
 
     /// Row hover: a color shift only, never a size change.
@@ -23,12 +27,21 @@ enum Theme {
     // Geometry (points). Rows are inset from the panel edge so hover fills sit
     // concentrically inside the panel's 16 pt corners.
     static let panelCorner: CGFloat = 16
-    static let rowCorner: CGFloat = 9
+    static let rowCorner: CGFloat = panelCorner - edgeInset // concentric with the panel
     static let panelWidth: CGFloat = 340
     static let edgeInset: CGFloat = 6
     static let textInset: CGFloat = 10
 
     static let hoverAnimation = Animation.easeOut(duration: 0.12)
+
+    /// White (dark mode) or black (light mode) at the given opacity, so the gray
+    /// takes on a little of the glass behind it.
+    private static func gray(dark: CGFloat, light: CGFloat) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(white: 1, alpha: dark) : NSColor(white: 0, alpha: light)
+        })
+    }
 }
 
 extension AppSettings.Appearance {
@@ -59,6 +72,7 @@ struct IconButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusEffectDisabled() // no blue focus ring: the panel is grayscale
         .help(help)
         .accessibilityLabel(help)
         .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }

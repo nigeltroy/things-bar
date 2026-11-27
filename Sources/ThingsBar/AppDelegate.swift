@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.imagePosition = .noImage // text only: the to-do titles are the UI
-            button.setAccessibilityLabel("ThingsBar")
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -63,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeTitle() {
         withObservationTracking {
             statusItem.button?.title = store.menuBarTitle
+            statusItem.button?.setAccessibilityLabel("ThingsBar: \(store.menuBarTitle)")
             statusItem.button?.toolTip = store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }
@@ -153,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         Task { await store.refresh() }
         button.highlight(true)
+        if !SelfTest.isActive {
+            panelState.opens = UserDefaults.standard.integer(forKey: "panelOpens") + 1
+            UserDefaults.standard.set(panelState.opens, forKey: "panelOpens")
+        }
         panel.show(below: button)
     }
 }
