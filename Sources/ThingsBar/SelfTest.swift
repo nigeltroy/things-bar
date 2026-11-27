@@ -179,6 +179,13 @@ enum SelfTest {
             snapshot(GlassPreview { TodoListView(store: store, state: state).frame(width: Theme.panelWidth) },
                      to: dir.appendingPathComponent(name), dark: dark)
         }
+        // Hovered: the notes chevron becomes a button beside Edit and More.
+        for (name, dark) in [("notes-hover.png", true), ("notes-hover-light.png", false)] {
+            snapshot(GlassPreview {
+                TodoRow(store: store, item: items[1], edit: {}, forceHover: true, state: state)
+                    .padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+            }, to: dir.appendingPathComponent(name), dark: dark)
+        }
     }
 
     /// The Settings update rows and the list footer, in dark and light.

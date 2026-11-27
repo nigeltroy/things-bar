@@ -538,7 +538,9 @@ struct TodoRow: View {
 
     private var hovering: Bool { hoveringState || forceHover || selected }
     private var pending: Bool { store.pendingIDs.contains(item.id) }
-    private static let actionsWidth: CGFloat = 52
+    private var hasNotes: Bool { !item.notes.isEmpty }
+    /// Edit and More, plus the notes chevron when there are notes.
+    private var actionsWidth: CGFloat { hasNotes ? 76 : 52 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -553,9 +555,10 @@ struct TodoRow: View {
                         .strikethrough(checked, color: Theme.textMuted)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source,
-                             notesExpanded: notesExpanded, toggleNotes: { toggleNotes() })
+                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source)
                 }
+                // Room for the resting notes chevron, so the title never runs under it.
+                .padding(.trailing, hasNotes ? 18 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Fade the text's end under the hover actions instead of reflowing it.
                 .mask(alignment: .trailing) {
@@ -563,7 +566,7 @@ struct TodoRow: View {
                         Rectangle()
                         LinearGradient(colors: [.black, .black.opacity(hovering ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
                             .frame(width: 24)
-                        Rectangle().fill(.black.opacity(hovering ? 0 : 1)).frame(width: Self.actionsWidth - 16)
+                        Rectangle().fill(.black.opacity(hovering ? 0 : 1)).frame(width: actionsWidth - 16)
                     }
                 }
             }
@@ -581,11 +584,17 @@ struct TodoRow: View {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 24, height: 24)
                 } else {
                     HStack(spacing: 0) {
-                        IconButton(systemName: "pencil", help: "Edit", action: edit)
-                        MoreMenu(store: store, item: item, edit: edit)
+                        HStack(spacing: 0) {
+                            IconButton(systemName: "pencil", help: "Edit", action: edit)
+                            MoreMenu(store: store, item: item, edit: edit)
+                        }
+                        .opacity(hovering && !isDragged ? 1 : 0)
+                        .allowsHitTesting(hovering && !isDragged)
+                        // Always there for rows with notes: faint at rest, a button on hover.
+                        if hasNotes {
+                            NotesDisclosure(expanded: notesExpanded, rowHovered: hovering && !isDragged, action: toggleNotes)
+                        }
                     }
-                    .opacity(hovering && !isDragged ? 1 : 0)
-                    .allowsHitTesting(hovering && !isDragged)
                 }
             }
             .padding(.top, 3).padding(.trailing, 4)
@@ -665,13 +674,10 @@ struct MetaLine: View {
     let catalog: SourceCatalog
     /// The list being shown: its own name isn't repeated under each to-do.
     let source: ThingsSource
-    var notesExpanded = false
-    /// Shows or hides the notes; nil draws a plain notes glyph.
-    var toggleNotes: (() -> Void)?
 
     var body: some View {
         let parent = catalog.parentName(for: item, listedFrom: source)
-        if parent != nil || item.deadline != nil || !item.tags.isEmpty || !item.notes.isEmpty {
+        if parent != nil || item.deadline != nil || !item.tags.isEmpty {
             // Where it lives, how it's labelled, then when it's due (Things also puts
             // the deadline last). Tags read as #tags so they can't pass for a project.
             HStack(spacing: 7) {
@@ -680,14 +686,6 @@ struct MetaLine: View {
                 }
                 if !item.tags.isEmpty {
                     Text(item.tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.textMuted).lineLimit(1)
-                }
-                if !item.notes.isEmpty {
-                    if let toggleNotes {
-                        NotesToggle(expanded: notesExpanded, action: toggleNotes)
-                    } else {
-                        Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
-                            .accessibilityLabel("Has notes")
-                    }
                 }
                 if let deadline = item.deadline {
                     let overdue = DeadlineFormat.isOverdue(deadline)
@@ -704,28 +702,26 @@ struct MetaLine: View {
     }
 }
 
-/// "Notes" with a chevron: shows the to-do's notes in the list. Fixed size, so the
-/// meta line never moves when it flips.
-struct NotesToggle: View {
+/// The chevron at a row's right edge that shows or hides its notes: › closed, ⌄ open.
+/// Faint while the pointer is elsewhere (so you can see which to-dos have notes
+/// without spending a line on it), a full button when the row is hovered.
+struct NotesDisclosure: View {
     let expanded: Bool
+    var rowHovered = true
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 3) {
-                Image(systemName: "text.alignleft").font(.system(size: 9, weight: .medium))
-                Text("Notes")
-                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
-                    .rotationEffect(.degrees(expanded ? 180 : 0))
-            }
-            .foregroundStyle(hovering || expanded ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(Capsule().fill(hovering ? Theme.hoverFill : Theme.fieldFill))
-            .contentShape(Capsule())
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .foregroundStyle(hovering ? Theme.textPrimary : rowHovered ? Theme.textSecondary : Theme.textTertiary)
+                .frame(width: 24, height: 24)
+                .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.hoverFill : .clear))
+                .contentShape(Rectangle())
         }
-        .buttonStyle(FocusRingButtonStyle(shape: Capsule()))
-        .fixedSize()
+        .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 6)))
         .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
         .help(expanded ? "Hide notes (←)" : "Show notes (→)")
         .accessibilityLabel(expanded ? "Hide notes" : "Show notes")
@@ -771,13 +767,17 @@ struct CompletedRow: View {
                         .strikethrough(true, color: Theme.textMuted)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source, notesExpanded: notesExpanded,
-                             toggleNotes: state == nil ? nil : {
-                                 withAnimation(Theme.motion(.snappy(duration: 0.18))) { state?.toggleNotes(item.id) }
-                             })
+                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if pending { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 24, height: 18) }
+                if pending {
+                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 24, height: 18)
+                } else if !item.notes.isEmpty {
+                    NotesDisclosure(expanded: notesExpanded, rowHovered: hovering) {
+                        withAnimation(Theme.motion(.snappy(duration: 0.18))) { state?.toggleNotes(item.id) }
+                    }
+                    .padding(.top, -3).padding(.trailing, -6) // where the row's chevron sits on open to-dos
+                }
             }
             if notesExpanded { NotesText(notes: item.notes) }
         }
