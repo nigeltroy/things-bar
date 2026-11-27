@@ -2,8 +2,12 @@ import ServiceManagement
 import SwiftUI
 import ThingsBarCore
 
-struct SettingsView: View {
+/// Settings shown inside the panel (no separate window): a back button returns
+/// to the list, as when drilling into a Control Center module. Changes apply
+/// immediately; there is no Save step except for the auth token.
+struct SettingsPage: View {
     @Bindable var store: TodoStore
+    let state: PanelState
     let tokenStore: TokenStoring
 
     @State private var tokenDraft = ""
@@ -12,104 +16,147 @@ struct SettingsView: View {
     @State private var loginError: String?
 
     var body: some View {
-        Form {
-            sourceSection
-            filterSection
-            menuBarSection
-            thingsSection
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                VStack(spacing: 0) {
+                    listSection
+                    menuBarSection
+                    filterSection
+                    generalSection
+                    thingsSection
+                    Text("ThingsBar \(ThingsBarInfo.version)")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+                        .padding(.vertical, 12)
+                }
+                .padding(.horizontal, Theme.edgeInset)
+            }
+            .frame(maxHeight: 500)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.background)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
         .task { await store.refresh() }
         .onAppear { tokenDraft = tokenStore.token ?? "" }
     }
 
-    // MARK: Source
-
-    private var sourceSection: some View {
-        Section {
-            Picker("List", selection: $store.settings.source) {
-                group("Lists", store.catalog.lists)
-                group("Projects", store.catalog.projects)
-                group("Areas", store.catalog.areas)
-                group("Tags", store.catalog.tags)
-                if !allSources.contains(store.settings.source) {
-                    Text("\(store.settings.source.name) (missing)").tag(store.settings.source)
+    private var header: some View {
+        HStack(spacing: 4) {
+            Button { state.route = .list } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                    Text("Settings").font(.system(size: 13, weight: .semibold))
                 }
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 6).frame(height: 24)
+                .contentShape(Rectangle())
             }
-        } header: {
-            Text("Show to-dos from")
-        } footer: {
-            Text("The first to-do, in Things' order, appears in the menu bar.").foregroundStyle(.secondary)
+            .buttonStyle(HoverFillButtonStyle())
+            .help("Back to the list (Esc)")
+            Spacer()
+        }
+        .padding(.leading, Theme.edgeInset + 4).padding(.trailing, Theme.edgeInset + 2)
+        .padding(.top, 10).padding(.bottom, 4)
+    }
+
+    // MARK: Sections
+
+    private var listSection: some View {
+        SettingsSection("List") {
+            SettingsRow("Show to-dos from") {
+                Menu(store.settings.source.name) {
+                    sourceGroup("Lists", store.catalog.lists)
+                    sourceGroup("Projects", store.catalog.projects)
+                    sourceGroup("Areas", store.catalog.areas)
+                    sourceGroup("Tags", store.catalog.tags)
+                }
+                .menuStyle(.button).buttonStyle(.plain)
+                .modifier(ValueChip())
+            }
         }
     }
 
-    private var allSources: [ThingsSource] {
-        store.catalog.lists + store.catalog.projects + store.catalog.areas + store.catalog.tags
-    }
-
-    @ViewBuilder private func group(_ title: String, _ sources: [ThingsSource]) -> some View {
+    @ViewBuilder private func sourceGroup(_ title: String, _ sources: [ThingsSource]) -> some View {
         if !sources.isEmpty {
             Section(title) {
-                ForEach(sources) { Text($0.name).tag($0) }
-            }
-        }
-    }
-
-    // MARK: Filters
-
-    private var filterSection: some View {
-        Section("Filters") {
-            tagMenu("Only with tags", selection: $store.settings.filter.includeTags, emptyLabel: "Any")
-            tagMenu("Hide tags", selection: $store.settings.filter.excludeTags, emptyLabel: "None")
-            Toggle("Only to-dos with a deadline", isOn: $store.settings.filter.onlyWithDeadline)
-            Toggle("Hide to-dos scheduled for later", isOn: $store.settings.filter.hideScheduledLater)
-            TextField("Title or notes contain", text: $store.settings.filter.searchText, prompt: Text("Anything"))
-            if store.settings.filter.isActive {
-                Button("Clear filters") { store.settings.filter = TodoFilter() }
-            }
-        }
-    }
-
-    private func tagMenu(_ title: String, selection: Binding<[String]>, emptyLabel: String) -> some View {
-        LabeledContent(title) {
-            Menu(selection.wrappedValue.isEmpty ? emptyLabel : selection.wrappedValue.joined(separator: ", ")) {
-                if store.catalog.tagNames.isEmpty { Text("No tags in Things") }
-                ForEach(store.catalog.tagNames, id: \.self) { tag in
-                    Toggle(tag, isOn: Binding(
-                        get: { selection.wrappedValue.contains(tag) },
-                        set: { on in
-                            selection.wrappedValue.removeAll { $0 == tag }
-                            if on { selection.wrappedValue.append(tag) }
-                        }))
+                ForEach(sources) { source in
+                    Toggle(source.name, isOn: Binding(get: { store.settings.source == source },
+                                                      set: { if $0 { store.settings.source = source } }))
                 }
             }
-            .fixedSize()
         }
     }
 
-    // MARK: Menu bar
-
     private var menuBarSection: some View {
-        Section("Menu bar") {
-            Stepper("Title length: \(store.settings.menuBarTitleLength) characters",
-                    value: $store.settings.menuBarTitleLength, in: 12...80, step: 4)
-            Toggle("Show how many to-dos remain", isOn: $store.settings.showCountInMenuBar)
-            Picker("Refresh every", selection: $store.settings.refreshSeconds) {
-                Text("15 seconds").tag(15)
-                Text("30 seconds").tag(30)
-                Text("1 minute").tag(60)
-                Text("5 minutes").tag(300)
+        SettingsSection("Menu bar") {
+            SettingsRow("To-dos shown") {
+                Picker("", selection: $store.settings.menuBarItemCount) {
+                    Text("1").tag(1); Text("2").tag(2); Text("3").tag(3)
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
             }
-            Picker("Appearance", selection: $store.settings.appearance) {
-                ForEach(AppSettings.Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+            SettingsRow("Length of each") {
+                Menu("\(store.settings.menuBarTitleLength) characters") {
+                    ForEach([16, 24, 32, 48, 64], id: \.self) { n in
+                        Toggle("\(n) characters", isOn: Binding(get: { store.settings.menuBarTitleLength == n },
+                                                               set: { if $0 { store.settings.menuBarTitleLength = n } }))
+                    }
+                }
+                .menuStyle(.button).buttonStyle(.plain)
+                .modifier(ValueChip())
             }
-            Toggle("Open at login", isOn: $launchAtLogin)
+            SettingsToggle("Show how many remain", isOn: $store.settings.showCountInMenuBar)
+            PreviewLine(text: store.menuBarTitle)
+        }
+    }
+
+    private var filterSection: some View {
+        SettingsSection("Filters") {
+            SettingsRow("Only with tags") { tagMenu(selection: $store.settings.filter.includeTags, emptyLabel: "Any") }
+            SettingsRow("Hide tags") { tagMenu(selection: $store.settings.filter.excludeTags, emptyLabel: "None") }
+            SettingsToggle("Only with a deadline", isOn: $store.settings.filter.onlyWithDeadline)
+            SettingsToggle("Hide scheduled for later", isOn: $store.settings.filter.hideScheduledLater)
+            SettingsRow("Contains") {
+                TextField("", text: $store.settings.filter.searchText, prompt: Text("Any text").foregroundStyle(Theme.textTertiary))
+                    .textFieldStyle(.plain).font(.system(size: 12)).multilineTextAlignment(.trailing)
+                    .frame(width: 130)
+                    .modifier(ValueChip())
+            }
+            if store.settings.filter.isActive {
+                HStack {
+                    Spacer()
+                    Button("Clear filters") { store.settings.filter = TodoFilter() }.buttonStyle(SoftButtonStyle())
+                }
+                .padding(.horizontal, Theme.textInset).padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func tagMenu(selection: Binding<[String]>, emptyLabel: String) -> some View {
+        Menu(selection.wrappedValue.isEmpty ? emptyLabel : selection.wrappedValue.joined(separator: ", ")) {
+            if store.catalog.tagNames.isEmpty { Text("No tags in Things") }
+            ForEach(store.catalog.tagNames, id: \.self) { tag in
+                Toggle(tag, isOn: Binding(
+                    get: { selection.wrappedValue.contains(tag) },
+                    set: { on in
+                        selection.wrappedValue.removeAll { $0 == tag }
+                        if on { selection.wrappedValue.append(tag) }
+                    }))
+            }
+        }
+        .menuStyle(.button).buttonStyle(.plain)
+        .modifier(ValueChip())
+    }
+
+    private var generalSection: some View {
+        SettingsSection("General") {
+            SettingsRow("Appearance") {
+                Picker("", selection: $store.settings.appearance) {
+                    ForEach(AppSettings.Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+            }
+            SettingsToggle("Open at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, on in setLaunchAtLogin(on) }
-            if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
+            if let loginError { Note(text: loginError) }
         }
     }
 
@@ -123,21 +170,22 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Things
-
     private var thingsSection: some View {
-        Section {
-            HStack {
-                SecureField("Auth token", text: $tokenDraft, prompt: Text("Paste token"))
-                Button("Save") { saveToken() }
+        SettingsSection("Things auth token") {
+            HStack(spacing: 6) {
+                SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textTertiary))
+                    .textFieldStyle(.plain).font(.system(size: 12))
+                    .padding(.horizontal, 8).frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
+                    .onSubmit(saveToken)
+                Button("Save", action: saveToken)
+                    .buttonStyle(SoftButtonStyle(prominent: true))
                     .disabled(tokenDraft.trimmingCharacters(in: .whitespaces) == (tokenStore.token ?? ""))
             }
-            if let tokenMessage { Text(tokenMessage).font(.caption).foregroundStyle(.secondary) }
-        } header: {
-            Text("Things")
-        } footer: {
-            Text("Needed to edit to-dos. In Things: Settings → General → Enable Things URLs → Manage. Stored in your Keychain.")
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, Theme.textInset).padding(.vertical, 4)
+            Note(text: tokenMessage ?? (store.hasAuthToken
+                ? "Saved in your Keychain. Needed to edit, schedule and reorder Today."
+                : "Needed to edit, schedule and reorder Today. In Things: Settings → General → Enable Things URLs → Manage."))
         }
     }
 
@@ -145,42 +193,107 @@ struct SettingsView: View {
         do {
             try tokenStore.setToken(tokenDraft)
             store.hasAuthToken = tokenStore.token != nil
-            tokenMessage = tokenStore.token == nil ? "Token removed." : "Token saved to Keychain."
+            tokenMessage = tokenStore.token == nil ? "Token removed." : "Token saved to your Keychain."
         } catch {
             tokenMessage = "Couldn't save: \(error.localizedDescription)"
         }
     }
 }
 
-/// Hosts SettingsView in a regular window (menu bar apps have no Settings menu).
-@MainActor
-final class SettingsWindowController {
-    private var window: NSWindow?
-    private let store: TodoStore
-    private let tokenStore: TokenStoring
+// MARK: - Building blocks
 
-    init(store: TodoStore, tokenStore: TokenStoring) {
-        self.store = store; self.tokenStore = tokenStore
-    }
+struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+    init(_ title: String, @ViewBuilder content: () -> Content) { self.title = title; self.content = content() }
 
-    private var appearance: NSAppearance?
-
-    func setAppearance(_ appearance: NSAppearance?) {
-        self.appearance = appearance
-        window?.appearance = appearance
-    }
-
-    func show() {
-        if window == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, tokenStore: tokenStore)))
-            w.title = "ThingsBar Settings"
-            w.styleMask = [.titled, .closable]
-            w.isReleasedWhenClosed = false
-            w.center()
-            w.appearance = appearance
-            window = w
+    var body: some View {
+        VStack(spacing: 0) {
+            SectionHeader(title: title)
+            content
         }
-        NSApp.activate()
-        window?.makeKeyAndOrderFront(nil)
+        .padding(.bottom, 6)
+    }
+}
+
+/// Label on the left, control on the right, 30 pt tall, hover fill only.
+struct SettingsRow<Control: View>: View {
+    let label: String
+    @ViewBuilder let control: Control
+    @State private var hovering = false
+    init(_ label: String, @ViewBuilder control: () -> Control) { self.label = label; self.control = control() }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Spacer(minLength: 8)
+            control
+        }
+        .padding(.horizontal, Theme.textInset).frame(minHeight: 30)
+        .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(hovering ? Theme.hoverFill : .clear))
+        .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
+    }
+}
+
+struct SettingsToggle: View {
+    let label: String
+    @Binding var isOn: Bool
+    init(_ label: String, isOn: Binding<Bool>) { self.label = label; self._isOn = isOn }
+
+    var body: some View {
+        SettingsRow(label) {
+            Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                .tint(Color(nsColor: .secondaryLabelColor))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { isOn.toggle() }
+    }
+}
+
+/// A quiet capsule around a menu or field value.
+struct ValueChip: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8).frame(height: 22)
+            .background(Capsule().fill(Theme.fieldFill))
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(maxWidth: 170, alignment: .trailing)
+    }
+}
+
+struct Note: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Theme.textInset).padding(.vertical, 3)
+    }
+}
+
+/// Shows what the menu bar will read with the current settings.
+struct PreviewLine: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "menubar.rectangle").font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+            Text(text).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Theme.textInset).padding(.vertical, 4)
+        .accessibilityLabel("Menu bar preview: \(text)")
+    }
+}
+
+struct HoverFillButtonStyle: ButtonStyle {
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(RoundedRectangle(cornerRadius: 6).fill(configuration.isPressed ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
+            .onHover { hovering = $0 }
     }
 }

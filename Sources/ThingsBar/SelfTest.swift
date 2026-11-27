@@ -60,6 +60,8 @@ enum SelfTest {
             await store(delegate).refresh()
             var report = statusReport(delegate)
             report["quickMenu"] = delegate.makeQuickMenu().items.map { $0.isSeparatorItem ? "---" : $0.title }
+            report["rowHeights"] = hoverHeights(delegate)
+            report["statusItemHasImage"] = delegate.statusItem.button?.image != nil
             write(json: report, to: dir.appendingPathComponent("status.json"))
             renderViews(delegate, dir)
 
@@ -91,15 +93,43 @@ enum SelfTest {
 
     static func renderViews(_ d: AppDelegate, _ dir: URL) {
         let store = d.store!
-        snapshot(PopoverView(store: store), to: dir.appendingPathComponent("popover.png"))
-        snapshot(PopoverView(store: store), to: dir.appendingPathComponent("popover-light.png"), dark: false)
-        snapshot(SettingsView(store: store, tokenStore: d.tokenStore), to: dir.appendingPathComponent("settings.png"))
-        if let first = store.visibleItems.first {
-            snapshot(TodoEditor(store: store, item: first) {}.padding(6).frame(width: 360).background(Theme.background),
-                     to: dir.appendingPathComponent("editor.png"))
+        func panel(_ route: PanelState.Route) -> some View {
+            let state = PanelState(); state.route = route
+            return PanelView(store: store, state: state, tokenStore: d.tokenStore)
         }
-        snapshot(ErrorBanner(message: ThingsError.changeNotApplied.errorDescription!) {}.padding(12).frame(width: 360)
-            .background(Theme.background), to: dir.appendingPathComponent("error.png"))
+        snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel.png"))
+        snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel-light.png"), dark: false)
+        snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings.png"))
+        snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings-light.png"), dark: false)
+        if let first = store.visibleItems.first {
+            snapshot(GlassPreview {
+                VStack(spacing: 0) {
+                    TodoRow(store: store, item: first, isTop: true, edit: {}, forceHover: true)
+                    ForEach(store.visibleItems.dropFirst().prefix(2)) { TodoRow(store: store, item: $0, isTop: false, edit: {}) }
+                }.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+            }, to: dir.appendingPathComponent("hover.png"))
+            snapshot(GlassPreview {
+                TodoEditor(store: store, item: first) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+            }, to: dir.appendingPathComponent("editor.png"))
+        }
+        snapshot(GlassPreview {
+            ErrorBanner(message: ThingsError.changeNotApplied.errorDescription!) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+        }, to: dir.appendingPathComponent("error.png"))
+    }
+
+    /// Row height with and without hover, for every visible row: hovering must not resize rows.
+    static func hoverHeights(_ d: AppDelegate) -> [[String: Any]] {
+        let store = d.store!
+        var out: [[String: Any]] = []
+        for item in store.visibleItems {
+            var h: [CGFloat] = []
+            for hover in [false, true] {
+                h.append(NSHostingView(rootView: TodoRow(store: store, item: item, isTop: false, edit: {}, forceHover: hover)
+                    .frame(width: Theme.panelWidth - 2 * Theme.edgeInset)).fittingSize.height)
+            }
+            out.append(["title": item.title, "normal": h[0], "hover": h[1]])
+        }
+        return out
     }
 
     /// Runs one step and records what the menu bar showed afterwards.
@@ -130,7 +160,50 @@ enum SelfTest {
             try? await Task.sleep(for: .milliseconds(50))
             return !(d.statusItem.button?.title ?? "").contains(" | ")
         })
+        out.append(contentsOf: await panelSteps(d))
         out.append(await step("filter Home", d) { s.settings.filter.includeTags = ["Home"]; return true })
+        return out
+    }
+
+    /// Opens the real panel and checks placement, glass, settings navigation and Esc.
+    static func panelSteps(_ d: AppDelegate) async -> [[String: Any]] {
+        let pc = d.panel!, panel = d.panel.panel
+        func settle() async { try? await Task.sleep(for: .milliseconds(400)) }
+        func info() -> [String: Any] {
+            let b = d.statusItem.button!
+            let br = b.window!.convertToScreen(b.convert(b.bounds, to: nil))
+            return ["panelFrame": NSStringFromRect(panel.frame), "buttonFrame": NSStringFromRect(br),
+                    "gapBelowButton": br.minY - panel.frame.maxY, "visible": panel.isVisible, "key": panel.isKeyWindow,
+                    "glass": String(describing: type(of: panel.contentView!)), "route": "\(d.panelState.route)"]
+        }
+        var out: [[String: Any]] = []
+        d.showPanel(); await settle()
+        var listInfo = info()
+        let listHeight = panel.frame.height, listTop = panel.frame.maxY
+        listInfo["step"] = "open panel"
+        listInfo["ok"] = panel.isVisible && panel.isKeyWindow && abs((listInfo["gapBelowButton"] as! CGFloat) - PanelController.gapBelowMenuBar) < 1
+            && (listInfo["glass"] as! String).contains("Glass") && panel.frame.width == Theme.panelWidth
+        out.append(listInfo)
+
+        d.panelState.route = .settings; await settle()
+        var settingsInfo = info()
+        settingsInfo["step"] = "settings in same panel"
+        settingsInfo["ok"] = panel.isVisible && abs(panel.frame.maxY - listTop) < 1 && panel.frame.height != listHeight
+        out.append(settingsInfo)
+
+        panel.cancelOperation(nil); await settle() // Esc
+        var back = info(); back["step"] = "esc goes back"; back["ok"] = d.panelState.route == .list && panel.isVisible
+        out.append(back)
+
+        panel.cancelOperation(nil); await settle() // Esc again
+        var closed = info(); closed["step"] = "esc closes"; closed["ok"] = !panel.isVisible && !pc.isShown
+        out.append(closed)
+
+        d.openSettings(); await settle()
+        var quick = info(); quick["step"] = "quick menu Settings… opens panel on settings"
+        quick["ok"] = panel.isVisible && d.panelState.route == .settings
+        out.append(quick)
+        pc.close(); await settle()
         return out
     }
 
@@ -219,5 +292,24 @@ enum SelfTest {
         ctx.draw(content, in: full)
         guard let out = ctx.makeImage() else { return }
         try? NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])?.write(to: url)
+    }
+}
+
+/// Offscreen renders can't show real Liquid Glass (the window server composites it),
+/// so self-test images approximate it: a busy wallpaper under a translucent panel.
+struct GlassPreview<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        content
+            .background(RoundedRectangle(cornerRadius: Theme.panelCorner)
+                .fill(scheme == .dark ? Color(white: 0.12).opacity(0.70) : Color(white: 0.98).opacity(0.68)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.panelCorner).strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.5)))
+            .padding(24)
+            .background(LinearGradient(colors: scheme == .dark
+                ? [Color(red: 0.16, green: 0.22, blue: 0.36), Color(red: 0.42, green: 0.20, blue: 0.30), Color(red: 0.10, green: 0.30, blue: 0.28)]
+                : [Color(red: 0.60, green: 0.75, blue: 0.95), Color(red: 0.98, green: 0.78, blue: 0.70), Color(red: 0.70, green: 0.92, blue: 0.80)],
+                startPoint: .topLeading, endPoint: .bottomTrailing))
     }
 }

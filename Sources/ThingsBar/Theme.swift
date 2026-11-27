@@ -1,37 +1,35 @@
-import ThingsBarCore
 import AppKit
 import SwiftUI
+import ThingsBarCore
 
-/// Low-contrast palette modelled on Claude's warm dark UI: charcoal backgrounds,
-/// off-white (never pure white) text, a muted clay accent.
+/// Grayscale design tokens for content on Liquid Glass.
+///
+/// Text uses the system's hierarchical label styles (primary, secondary, tertiary),
+/// which stay legible over glass in light and dark mode. Emphasis comes from weight
+/// and fills, never from hue.
 enum Theme {
-    static let background = dynamic(light: 0xFAF9F5, dark: 0x262624)
-    static let surface = dynamic(light: 0xF0EEE6, dark: 0x30302E)
-    static let surfaceHover = dynamic(light: 0xE8E6DC, dark: 0x383836)
-    static let border = dynamic(light: 0x1F1E1D, dark: 0xFAF9F5, lightAlpha: 0.10, darkAlpha: 0.08)
-    static let textPrimary = dynamic(light: 0x3D3D3A, dark: 0xE6E4DC)
-    static let textSecondary = dynamic(light: 0x73726C, dark: 0xA6A39A)
-    static let textTertiary = dynamic(light: 0x9C9A92, dark: 0x75736C)
-    static let accent = dynamic(light: 0xC96442, dark: 0xD97757)
-    static let accentSoft = dynamic(light: 0xC96442, dark: 0xD97757, lightAlpha: 0.12, darkAlpha: 0.14)
-    static let deadline = dynamic(light: 0xB0702A, dark: 0xD4A35E)
-    static let danger = dynamic(light: 0xB5473A, dark: 0xE08A7E)
+    static let textPrimary = Color.primary
+    static let textSecondary = Color.secondary
+    static let textTertiary = Color(nsColor: .tertiaryLabelColor)
+    static let textQuaternary = Color(nsColor: .quaternaryLabelColor)
+    static let separator = Color.primary.opacity(0.08)
 
-    static let corner: CGFloat = 8
+    /// Row hover: a color shift only, never a size change.
+    static let hoverFill = Color.primary.opacity(0.07)
+    /// Pressed, focused and field backgrounds.
+    static let fieldFill = Color.primary.opacity(0.05)
+    static let strongFill = Color.primary.opacity(0.12)
 
-    private static func dynamic(light: UInt32, dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return rgb(isDark ? dark : light, alpha: isDark ? darkAlpha : lightAlpha)
-        })
-    }
+    // Geometry (points). Rows are inset from the panel edge so hover fills sit
+    // concentrically inside the panel's 16 pt corners.
+    static let panelCorner: CGFloat = 16
+    static let rowCorner: CGFloat = 9
+    static let panelWidth: CGFloat = 340
+    static let edgeInset: CGFloat = 6
+    static let textInset: CGFloat = 10
 
-    private static func rgb(_ hex: UInt32, alpha: CGFloat) -> NSColor {
-        NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
-                blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
-    }
+    static let hoverAnimation = Animation.easeOut(duration: 0.12)
 }
-
 
 extension AppSettings.Appearance {
     var nsAppearance: NSAppearance? {
@@ -43,38 +41,55 @@ extension AppSettings.Appearance {
     }
 }
 
-/// Quiet icon button used in rows and the footer.
+/// Quiet icon button: tertiary glyph, hover fill. Fixed size, so hovering never moves anything.
 struct IconButton: View {
     let systemName: String
     let help: String
-    var role: ButtonRole?
+    var size: CGFloat = 24
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(role: role, action: action) {
+        Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
-                .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.surfaceHover : .clear))
+                .frame(width: size, height: size)
+                .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.hoverFill : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
-        .onHover { hovering = $0 }
+        .accessibilityLabel(help)
+        .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
     }
 }
 
-/// Filled, low-contrast text button.
+/// Low-contrast text button. `prominent` inverts to a solid label-colored capsule.
 struct SoftButtonStyle: ButtonStyle {
     var prominent = false
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(prominent ? Color(nsColor: .init(srgbRed: 0.15, green: 0.15, blue: 0.14, alpha: 1)) : Theme.textPrimary)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(prominent ? Theme.accent : Theme.surfaceHover))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+            .foregroundStyle(prominent ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(Theme.textPrimary))
+            .padding(.horizontal, 11).padding(.vertical, 5)
+            .background(Capsule().fill(prominent ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.strongFill)))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .contentShape(Capsule())
+    }
+}
+
+/// Small uppercase-free section header, as in Control Center.
+struct SectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Theme.textInset)
+            .padding(.top, 10).padding(.bottom, 2)
     }
 }

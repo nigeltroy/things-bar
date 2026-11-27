@@ -84,8 +84,12 @@ public final class TodoStore {
         if token != lastChangeToken { await refresh() }
     }
 
-    /// Overridden by reordering (see Reorder section); false until then.
-    var isBusyReordering: Bool { false }
+    // MARK: - Reorder (stub; implemented with drag and drop)
+    public private(set) var isSyncingOrder = false
+    var isBusyReordering: Bool { isSyncingOrder }
+    public var canReorder: Bool { false }
+    public var reorderUnavailableReason: String? { nil }
+    public func moveVisible(_ item: TodoItem, to index: Int) {}
 
     public func dismissError() { errorMessage = nil; errorCameFromRefresh = false }
 

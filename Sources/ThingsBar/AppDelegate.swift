@@ -5,17 +5,17 @@ import ThingsBarCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var statusItem: NSStatusItem!
-    private let popover = NSPopover()
     private(set) var store: TodoStore!
     private(set) var tokenStore: TokenStoring!
-    private(set) var settingsWindow: SettingsWindowController!
+    private(set) var panelState = PanelState()
+    private(set) var panel: PanelController!
     private var refreshTimer: Timer?
     private var changeTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
         store = SelfTest.isActive ? SelfTest.makeStore(tokenStore: tokenStore) : Self.makeLiveStore(tokenStore: tokenStore)
-        settingsWindow = SettingsWindowController(store: store, tokenStore: tokenStore)
+        store.hasAuthToken = tokenStore.token != nil
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -25,21 +25,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        store.hasAuthToken = tokenStore.token != nil
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: PopoverView(store: store, openSettings: { [weak self] in
-            self?.openSettings()
-        }))
+
+        panel = PanelController(content: makePanelView())
+        panel.handleEscape = { [weak self] in self?.panelState.back() ?? false }
+        panel.onClose = { [weak self] in
+            self?.panelState.editingID = nil
+            self?.panelState.route = .list
+            self?.statusItem.button?.highlight(false)
+        }
 
         observeTitle()
         observeRefreshInterval()
-        watchForChanges()
         observeAppearance()
+        watchForChanges()
         Task { await store.refresh() }
 
         if let dir = SelfTest.outputDirectory {
             SelfTest.run(delegate: self, outputDirectory: dir)
         }
+    }
+
+    func makePanelView() -> some View {
+        PanelView(store: store, state: panelState, tokenStore: tokenStore,
+                  openThings: { [weak self] in self?.openThings() },
+                  sizeChanged: { [weak self] in
+                      // Defer to the next turn so SwiftUI has committed the new layout.
+                      DispatchQueue.main.async { self?.panel?.fitToContent() }
+                  })
     }
 
     static func makeLiveStore(tokenStore: TokenStoring, persistence: SettingsPersisting = UserDefaultsSettings()) -> TodoStore {
@@ -51,18 +63,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeTitle() {
         withObservationTracking {
             statusItem.button?.title = store.menuBarTitle
-            statusItem.button?.toolTip = store.errorMessage ?? store.topItem?.title
+            statusItem.button?.toolTip = store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }
         }
     }
 
-    /// Re-creates the refresh timer whenever the interval setting changes.
+    /// Full refresh (catalog included) on the configured interval.
     private func observeRefreshInterval() {
         let seconds = withObservationTracking { store.settings.refreshSeconds } onChange: { [weak self] in
             Task { @MainActor in self?.observeRefreshInterval() }
         }
-        scheduleRefresh(every: seconds)
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(max(seconds, 15)), repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.store.refresh() }
+        }
     }
 
     /// Things has no change notifications, so poll a cheap fingerprint every 2 s and
@@ -74,32 +89,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         changeTimer?.tolerance = 0.5
     }
 
-    private func scheduleRefresh(every seconds: Int) {
-        refreshTimer?.invalidate()
-        let interval = TimeInterval(max(seconds, 5))
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.store.refresh() }
-        }
-    }
-
-    /// Applies the Dark/Light/System preference to the popover and settings window.
     private func observeAppearance() {
         let appearance = withObservationTracking { store.settings.appearance } onChange: { [weak self] in
             Task { @MainActor in self?.observeAppearance() }
         }
-        popover.appearance = appearance.nsAppearance
-        settingsWindow.setAppearance(appearance.nsAppearance)
+        panel.setAppearance(appearance.nsAppearance)
     }
 
     @objc func statusItemClicked(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
             showQuickMenu()
         } else {
-            togglePopover(sender)
+            togglePanel()
         }
     }
 
-    /// Right-click menu: act on the top to-do without opening the popover.
+    /// Right-click menu: act on the top to-do without opening the panel.
     func makeQuickMenu() -> NSMenu {
         let menu = NSMenu()
         if let top = store.topItem {
@@ -119,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showQuickMenu() {
         guard let button = statusItem.button else { return }
+        panel.close()
         let menu = makeQuickMenu()
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
@@ -126,16 +132,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func completeTop() { if let top = store.topItem { Task { await store.complete(top) } } }
     @objc private func revealTop() { if let top = store.topItem { Task { await store.reveal(top) } } }
     @objc private func refreshNow() { Task { await store.refresh() } }
-    @objc func openSettings() { popover.performClose(nil); settingsWindow.show() }
 
-    @objc func togglePopover(_ sender: Any?) {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            Task { await store.refresh() }
-            NSApp.activate()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    @objc func openSettings() {
+        panelState.route = .settings
+        if !panel.isShown { showPanel() }
+    }
+
+    private func openThings() {
+        panel.close()
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: ThingsAppleEventTransport.bundleID) {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
         }
+    }
+
+    func togglePanel() {
+        if panel.isShown { panel.close() } else { showPanel() }
+    }
+
+    func showPanel() {
+        guard let button = statusItem.button else { return }
+        Task { await store.refresh() }
+        button.highlight(true)
+        panel.show(below: button)
     }
 }
