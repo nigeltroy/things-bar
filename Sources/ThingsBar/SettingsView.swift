@@ -14,17 +14,18 @@ struct SettingsPage: View {
     @State private var tokenMessage: String?
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
+    @State private var filtersExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 VStack(spacing: 0) {
+                    // What to show, how the menu bar reads it, what unlocks editing, then the rest.
                     listSection
                     menuBarSection
-                    filterSection
-                    generalSection
                     thingsSection
+                    generalSection
                     keyboardSection
                     Text("ThingsBar \(ThingsBarInfo.version)")
                         .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
@@ -73,6 +74,7 @@ struct SettingsPage: View {
                 .menuStyle(.button).buttonStyle(.plain)
                 .modifier(ValueChip())
             }
+            filterRows
         }
     }
 
@@ -108,8 +110,36 @@ struct SettingsPage: View {
         }
     }
 
-    private var filterSection: some View {
-        SettingsSection("Filters") {
+    /// Filters are a power feature: one summary row in the List section that expands.
+    @ViewBuilder private var filterRows: some View {
+        SettingsRow("Filters", onLabelTap: { withAnimation(.snappy(duration: 0.2)) { filtersExpanded.toggle() } }) {
+            HStack(spacing: 6) {
+                Text(filterSummary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                    .rotationEffect(.degrees(filtersExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { filtersExpanded.toggle() } }
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(filtersExpanded ? "Expanded" : "Collapsed")
+        if filtersExpanded {
+            VStack(spacing: 0) { filterControls }
+                .padding(.leading, 10)
+                .transition(.opacity)
+        }
+    }
+
+    private var filterSummary: String {
+        let f = store.settings.filter
+        let count = [!f.includeTags.isEmpty, !f.excludeTags.isEmpty, f.onlyWithDeadline, f.hideScheduledLater,
+                     !f.searchText.trimmingCharacters(in: .whitespaces).isEmpty].filter { $0 }.count
+        return count == 0 ? "Off" : "\(count) on"
+    }
+
+    @ViewBuilder private var filterControls: some View {
+        Group {
             SettingsRow("Only with tags") { tagMenu(selection: $store.settings.filter.includeTags, emptyLabel: "Any") }
             SettingsRow("Hide tags") { tagMenu(selection: $store.settings.filter.excludeTags, emptyLabel: "None") }
             SettingsToggle("Only with a deadline", isOn: $store.settings.filter.onlyWithDeadline)
@@ -175,7 +205,7 @@ struct SettingsPage: View {
     }
 
     private var thingsSection: some View {
-        SettingsSection("Things auth token") {
+        SettingsSection("Things access") {
             HStack(spacing: 6) {
                 SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textMuted))
                     .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12))

@@ -765,9 +765,9 @@ struct TodoEditor: View {
     @State private var title: String
     @State private var notes: String
     @State private var tags: [String]
-    @State private var hasDeadline: Bool
-    @State private var deadline: Date
+    @State private var deadline: Date?
     @State private var saving = false
+    @State private var pickingDate = false
     @FocusState private var titleFocused: Bool
 
     init(store: TodoStore, item: TodoItem, done: @escaping () -> Void) {
@@ -775,28 +775,24 @@ struct TodoEditor: View {
         _title = State(initialValue: item.title)
         _notes = State(initialValue: item.notes)
         _tags = State(initialValue: item.tags)
-        _hasDeadline = State(initialValue: item.deadline != nil)
-        _deadline = State(initialValue: item.deadline ?? Calendar.current.startOfDay(for: Date()))
+        _deadline = State(initialValue: item.deadline)
     }
+
+    private var canSave: Bool { !saving && store.hasAuthToken && !title.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.textMuted))
-                .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 13, weight: .medium))
+                .textFieldStyle(.plain).tint(Theme.textPrimary).font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary).focused($titleFocused)
+                .onSubmit { if canSave { save() } } // Return in the title saves, as in Things
             TextField("", text: $notes, prompt: Text("Notes").foregroundStyle(Theme.textMuted), axis: .vertical)
-                .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .textFieldStyle(.plain).tint(Theme.textPrimary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1...6)
-            HStack(spacing: 8) {
-                Toggle(isOn: $hasDeadline) { Text("Deadline") }
-                    .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .tint(Theme.textSecondary)
-                if hasDeadline {
-                    DatePicker("", selection: $deadline, displayedComponents: .date)
-                        .labelsHidden().datePickerStyle(.field).controlSize(.small)
-                }
-                Spacer()
+            HStack(spacing: 6) {
+                deadlineChip
                 TagPicker(all: store.catalog.tagNames, selection: $tags)
+                Spacer()
             }
             if !store.hasAuthToken {
                 Text("Add your Things auth token in Settings to save edits.")
@@ -805,22 +801,54 @@ struct TodoEditor: View {
             HStack(spacing: 6) {
                 Spacer()
                 Button("Cancel", action: done).buttonStyle(SoftButtonStyle()).keyboardShortcut(.cancelAction)
-                Button(saving ? "Saving…" : "Save", action: save)
-                    .buttonStyle(SoftButtonStyle(prominent: true))
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(saving || !store.hasAuthToken || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button(action: save) {
+                    HStack(spacing: 5) {
+                        Text(saving ? "Saving…" : "Save")
+                        Text("⌘↩").opacity(0.6)
+                    }
+                }
+                .buttonStyle(SoftButtonStyle(prominent: true))
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSave)
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: Theme.rowCorner + 1).fill(Theme.fieldFill))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowCorner + 1).strokeBorder(Theme.separator))
+        .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(Theme.fieldFill))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowCorner).strokeBorder(Theme.separator))
         .onAppear { titleFocused = true }
+    }
+
+    /// "Deadline" or the date, as a chip; opens a calendar.
+    private var deadlineChip: some View {
+        Button { pickingDate = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "flag").font(.system(size: 10))
+                Text(deadline.map { DeadlineFormat.string($0) } ?? "Deadline").lineLimit(1)
+                if deadline != nil {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+                        .onTapGesture { deadline = nil }
+                        .accessibilityLabel("Remove deadline")
+                }
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(deadline == nil ? Theme.textSecondary : Theme.textPrimary)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Capsule().fill(Theme.strongFill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $pickingDate, arrowEdge: .bottom) {
+            GrayCalendar(selection: $deadline) { pickingDate = false }
+                .padding(12)
+                .frame(width: 252)
+        }
+        .help("Set a deadline")
     }
 
     private func save() {
         saving = true
         let changes = TodoChanges(title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes, tags: tags,
-                                  deadline: .some(hasDeadline ? deadline : nil))
+                                  deadline: .some(deadline))
         Task {
             let ok = await store.update(item, changes: changes)
             saving = false
@@ -914,5 +942,93 @@ enum ListKeys {
         default:
             return false
         }
+    }
+}
+
+/// A grayscale month calendar (the system's graphical picker draws today and the
+/// selection in the accent color). Quick picks for the common cases.
+struct GrayCalendar: View {
+    @Binding var selection: Date?
+    let done: () -> Void
+    @State private var month: Date
+    private let cal = Calendar.current
+
+    init(selection: Binding<Date?>, done: @escaping () -> Void) {
+        _selection = selection; self.done = done
+        let base = selection.wrappedValue ?? Date()
+        _month = State(initialValue: Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: base))!)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                quick("Today", 0); quick("Tomorrow", 1); quick("Next week", 7)
+            }
+            .fixedSize()
+            HStack {
+                Text(month.formatted(.dateTime.month(.wide).year())).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                IconButton(systemName: "chevron.left", help: "Previous month", size: 20) { shift(-1) }
+                IconButton(systemName: "chevron.right", help: "Next month", size: 20) { shift(1) }
+            }
+            let symbols = rotatedWeekdaySymbols
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 2), count: 7), spacing: 2) {
+                ForEach(symbols.indices, id: \.self) { i in
+                    Text(symbols[i]).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted).frame(height: 18)
+                }
+                ForEach(Array(days.enumerated()), id: \.offset) { _, day in
+                    if let day { DayCell(date: day, selected: selection.map { cal.isDate($0, inSameDayAs: day) } ?? false,
+                                         isToday: cal.isDateInToday(day)) { selection = day; done() } }
+                    else { Color.clear.frame(height: 26) }
+                }
+            }
+            HStack {
+                Button("No deadline") { selection = nil; done() }.buttonStyle(SoftButtonStyle())
+                Spacer()
+            }
+        }
+    }
+
+    private func quick(_ label: String, _ offset: Int) -> some View {
+        Button(label) { selection = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: Date())); done() }
+            .buttonStyle(SoftButtonStyle())
+    }
+
+    private func shift(_ months: Int) { month = cal.date(byAdding: .month, value: months, to: month) ?? month }
+
+    private var rotatedWeekdaySymbols: [String] {
+        let s = cal.veryShortWeekdaySymbols, first = cal.firstWeekday - 1
+        return Array(s[first...] + s[..<first])
+    }
+
+    /// The month's days, padded with nils so the first lands on its weekday.
+    private var days: [Date?] {
+        guard let range = cal.range(of: .day, in: .month, for: month) else { return [] }
+        let lead = (cal.component(.weekday, from: month) - cal.firstWeekday + 7) % 7
+        return Array(repeating: nil, count: lead) + range.compactMap { cal.date(byAdding: .day, value: $0 - 1, to: month) }
+    }
+}
+
+private struct DayCell: View {
+    let date: Date
+    let selected: Bool
+    let isToday: Bool
+    let pick: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: pick) {
+            Text("\(Calendar.current.component(.day, from: date))")
+                .font(.system(size: 12, weight: isToday || selected ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(selected ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(Theme.textPrimary))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(selected ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(hovering ? Theme.hoverFill : .clear)))
+                .overlay(Circle().strokeBorder(isToday && !selected ? Theme.textSecondary : .clear, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
