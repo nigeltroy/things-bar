@@ -1,0 +1,106 @@
+name: Build
+
+# Every push and pull request: run the unit tests and build a universal DMG
+# (downloadable from the run's "Artifacts" section).
+# Pushing a tag like v1.2.0 also publishes a GitHub Release with the DMG attached.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            BASE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+            VERSION="${BASE}-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Build universal app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: ./scripts/build-app.sh --universal
+
+      - name: Make DMG
+        id: dmg
+        run: |
+          DMG="build/ThingsBar-${{ steps.version.outputs.version }}.dmg"
+          DMG="${DMG//+/-}"
+          ./scripts/make-dmg.sh "$DMG"
+          (cd build && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test the DMG
+        run: |
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "${{ steps.dmg.outputs.path }}"
+          APP="$MNT/ThingsBar.app"
+          codesign --verify --strict --verbose=1 "$APP"
+          test "$(lipo -archs "$APP/Contents/MacOS/ThingsBar")" = "x86_64 arm64"
+          test -L "$MNT/Applications"
+          "$APP/Contents/MacOS/ThingsBar" --selftest "$RUNNER_TEMP/selftest"
+          python3 - "$RUNNER_TEMP/selftest/status.json" <<'PY'
+          import json, sys
+          s = json.load(open(sys.argv[1]))
+          assert s["error"] is None and s["itemCount"] > 0, s
+          print("self-test ok:", s["itemCount"], "items")
+          PY
+          hdiutil detach "$MNT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThingsBar-${{ github.run_number }}
+          path: |
+            build/ThingsBar-*.dmg
+            build/ThingsBar-*.dmg.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ThingsBar-${{ github.run_number }}
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ThingsBar ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --notes "Download **ThingsBar-${GITHUB_REF_NAME#v}.dmg**, open it and drag ThingsBar to Applications. The app is not notarized: on first launch, open System Settings → Privacy & Security and click **Open Anyway**. Requires macOS 14+ and Things 3."

@@ -14,10 +14,21 @@ complete, edit, schedule, cancel and delete to-dos without opening Things.
 
 Requires macOS 14+ and Things 3 (tested with Things 3.25).
 
-## Build and run
+## Install
+
+Download the latest `ThingsBar-<version>.dmg` from the repository's
+**Releases** page, open it and drag **ThingsBar** onto **Applications**.
+
+The app is ad-hoc signed, not notarized by Apple, so macOS blocks the first
+launch. Open **System Settings → Privacy & Security**, scroll to the message about
+ThingsBar and click **Open Anyway**. You only need to do this once per version.
+
+## Build from source
 
 ```bash
-./scripts/build-app.sh          # builds build/ThingsBar.app (release, ad-hoc signed)
+./scripts/build-app.sh               # build/ThingsBar.app (release, this Mac's arch, ad-hoc signed)
+./scripts/build-app.sh --universal   # Apple silicon + Intel
+./scripts/make-dmg.sh                # build/ThingsBar.dmg from build/ThingsBar.app
 open build/ThingsBar.app
 ```
 
@@ -49,6 +60,21 @@ build/ThingsBar.app/Contents/MacOS/ThingsBar --selftest /tmp/tb            # fix
 build/ThingsBar.app/Contents/MacOS/ThingsBar --selftest /tmp/tb --selftest-live --selftest-source Anytime
 THINGS_AUTH_TOKEN=… build/ThingsBar.app/Contents/MacOS/ThingsBar --selftest /tmp/tb --selftest-live --selftest-actions
 ```
+
+## Releases (GitHub Actions)
+
+`.github/workflows/build.yml` runs on every push and pull request. It runs the unit
+tests, builds a universal app, packages the DMG, mounts it and smoke-tests the app
+inside, then uploads the DMG as a workflow artifact.
+
+To publish a release, tag a commit and push the tag:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+The tag sets the app version (`1.0.0`), and the workflow attaches
+`ThingsBar-1.0.0.dmg` and its SHA-256 checksum to a new GitHub Release.
 
 ## How it talks to Things
 
@@ -97,4 +123,6 @@ Sources/ThingsBarCore/   models, filters, Apple Events, URL builder, client, sto
 Sources/ThingsBar/       AppKit status item, SwiftUI popover and settings, theme, self-test
 Tests/ThingsBarCoreTests unit tests plus opt-in live integration tests
 scripts/build-app.sh     builds and wraps the executable into ThingsBar.app
+scripts/make-dmg.sh      packages the app into a drag-to-install DMG
+.github/workflows/       CI build, DMG artifact and tagged releases
 ```
