@@ -276,7 +276,7 @@ struct TodoListView: View {
                         TodoEditor(store: store, item: item) { state.editingID = nil }
                             .padding(.vertical, 2)
                     } else {
-                        TodoRow(store: store, item: item, isTop: index == 0,
+                        TodoRow(store: store, item: item, inMenuBar: index < store.settings.menuBarItemCount,
                                 edit: { state.editingID = item.id },
                                 highlighted: state.justMovedID == item.id,
                                 isDragged: draggingID == item.id,
@@ -492,7 +492,8 @@ struct AddTodoField: View {
 struct TodoRow: View {
     let store: TodoStore
     let item: TodoItem
-    let isTop: Bool
+    /// Shown in the menu bar: marked with a slim bar at the leading edge.
+    let inMenuBar: Bool
     let edit: () -> Void
     /// Flash after being moved.
     var highlighted = false
@@ -517,7 +518,7 @@ struct TodoRow: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title.isEmpty ? "Untitled" : item.title)
-                    .font(.system(size: 13, weight: isTop ? .semibold : .regular))
+                    .font(.system(size: 13))
                     .foregroundStyle(checked ? Theme.textMuted : Theme.textPrimary)
                     .strikethrough(checked, color: Theme.textMuted)
                     .lineLimit(2)
@@ -539,6 +540,14 @@ struct TodoRow: View {
         .frame(minHeight: 30)
         .background(RoundedRectangle(cornerRadius: Theme.rowCorner)
             .fill(highlighted ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
+        .overlay(alignment: .topLeading) {
+            if inMenuBar {
+                Capsule().fill(Theme.textMuted).frame(width: 2.5, height: 14)
+                    .padding(.leading, 3).padding(.top, 8) // level with the checkbox
+                    .help("Shown in the menu bar")
+                    .accessibilityHidden(true)
+            }
+        }
         // Actions float over the row: showing them never changes the row's size.
         .overlay(alignment: .topTrailing) {
             Group {
@@ -630,22 +639,26 @@ struct MetaLine: View {
     var body: some View {
         let parent = catalog.projectName(for: item.projectID) ?? catalog.areaName(for: item.areaID)
         if parent != nil || item.deadline != nil || !item.tags.isEmpty || !item.notes.isEmpty {
+            // Where it lives, how it's labelled, then when it's due (Things also puts
+            // the deadline last). Tags read as #tags so they can't pass for a project.
             HStack(spacing: 7) {
+                if let parent {
+                    Text(parent).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                }
+                if !item.tags.isEmpty {
+                    Text(item.tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.textMuted).lineLimit(1)
+                }
+                if !item.notes.isEmpty {
+                    Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
+                        .accessibilityLabel("Has notes")
+                }
                 if let deadline = item.deadline {
                     let overdue = DeadlineFormat.isOverdue(deadline)
                     Label(DeadlineFormat.string(deadline), systemImage: "flag.fill")
                         .foregroundStyle(overdue ? Theme.textPrimary : Theme.textSecondary)
                         .fontWeight(overdue ? .semibold : .regular)
                         .lineLimit(1)
-                }
-                if let parent {
-                    Text(parent).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                }
-                if !item.tags.isEmpty {
-                    Text(item.tags.joined(separator: " · ")).foregroundStyle(Theme.textMuted).lineLimit(1)
-                }
-                if !item.notes.isEmpty {
-                    Image(systemName: "text.alignleft").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textMuted)
+                        .layoutPriority(1) // the date stays readable; names truncate first
                 }
             }
             .font(.system(size: 11))

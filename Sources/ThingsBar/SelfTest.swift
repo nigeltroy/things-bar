@@ -114,8 +114,8 @@ enum SelfTest {
         if let first = store.visibleItems.first {
             snapshot(GlassPreview {
                 VStack(spacing: 0) {
-                    TodoRow(store: store, item: first, isTop: true, edit: {}, forceHover: true)
-                    ForEach(store.visibleItems.dropFirst().prefix(2)) { TodoRow(store: store, item: $0, isTop: false, edit: {}) }
+                    TodoRow(store: store, item: first, inMenuBar: true, edit: {}, forceHover: true)
+                    ForEach(store.visibleItems.dropFirst().prefix(2)) { TodoRow(store: store, item: $0, inMenuBar: false, edit: {}) }
                 }.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
             }, to: dir.appendingPathComponent("hover.png"))
             snapshot(GlassPreview {
@@ -134,7 +134,7 @@ enum SelfTest {
         for item in store.visibleItems {
             var h: [CGFloat] = []
             for hover in [false, true] {
-                h.append(NSHostingView(rootView: TodoRow(store: store, item: item, isTop: false, edit: {}, forceHover: hover)
+                h.append(NSHostingView(rootView: TodoRow(store: store, item: item, inMenuBar: false, edit: {}, forceHover: hover)
                     .frame(width: Theme.panelWidth - 2 * Theme.edgeInset)).fittingSize.height)
             }
             out.append(["title": item.title, "normal": h[0], "hover": h[1]])
