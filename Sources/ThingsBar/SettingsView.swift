@@ -386,6 +386,7 @@ struct SoftScrollEdges: ViewModifier {
 struct UpdateRows: View {
     let updates: UpdateChecker
     @Binding var automatic: Bool
+    var progress = UpdateActions.progress
 
     var body: some View {
         SettingsRow("Check for Updates", onLabelTap: { Task { await updates.check() } }) {
@@ -393,9 +394,18 @@ struct UpdateRows: View {
             case .checking:
                 ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 16, height: 16)
             case .available(let release):
-                Button("Install \(release.version)") { UpdateActions.install(release) }
-                    .buttonStyle(SoftButtonStyle(prominent: true))
-                    .help("Downloads ThingsBar \(release.version), then quits, replaces and reopens ThingsBar")
+                switch progress.phase {
+                case .downloading, .installing:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 16, height: 16)
+                        Text(progress.phase == .installing ? "Installing…" : "Downloading…")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                case .idle, .failed:
+                    Button(progress.phase == .idle ? "Install \(release.version)" : "Try Again") { UpdateActions.install(release) }
+                        .buttonStyle(SoftButtonStyle(prominent: true))
+                        .help("Downloads ThingsBar \(release.version), then quits, replaces and reopens ThingsBar")
+                }
             case .upToDate:
                 Text("Up to date").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             case .failed:
@@ -405,7 +415,14 @@ struct UpdateRows: View {
             }
         }
         .accessibilityAddTraits(.isButton)
-        if case .available(let release) = updates.status {
+        if case .failed(let message) = progress.phase, case .available(let release) = updates.status {
+            Note(text: "Couldn't install ThingsBar \(release.version). \(message)", emphasized: true)
+            HStack {
+                Button("Download in Browser") { UpdateActions.openInBrowser(release) }.buttonStyle(SoftButtonStyle())
+                Spacer()
+            }
+            .padding(.horizontal, Theme.textInset)
+        } else if case .available(let release) = updates.status {
             Note(text: "ThingsBar \(release.version) is available (you have \(updates.currentVersion)). Install downloads it, then quits ThingsBar, replaces it and reopens it.")
         } else if case .failed(let message) = updates.status {
             Note(text: "Couldn't check for updates. \(message)")
@@ -418,6 +435,8 @@ struct UpdateRows: View {
 enum UpdateActions {
     /// Installs in place (Sparkle), set up by the app delegate. Nil in self-tests.
     @MainActor static var installer: ((ReleaseInfo) -> Void)?
+    /// What the install is doing (the app delegate shares Sparkle's).
+    @MainActor static var progress = InstallProgress()
 
     /// Downloads, quits, replaces ThingsBar and reopens it; the browser if that's unavailable.
     @MainActor static func install(_ release: ReleaseInfo) {

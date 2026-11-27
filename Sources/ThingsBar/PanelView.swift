@@ -193,6 +193,8 @@ struct FooterStatus: View {
                 label("Order saved in Things")
             } else if store.isLoading && store.lastRefresh == nil {
                 label("Reading Things…")
+            } else if UpdateActions.progress.isBusy {
+                label(UpdateActions.progress.phase == .installing ? "Installing update…" : "Downloading update…")
             } else if let release = updates?.available {
                 // Quiet, and only when nothing more pressing is shown: details live in Settings.
                 Button { state.route = .settings } label: {

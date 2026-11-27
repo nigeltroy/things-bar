@@ -32,6 +32,9 @@
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>ThingsBar reads and updates your Things 3 to-dos.</string>
+	<!-- Lets Install download silently; Sparkle never checks on its own (below). -->
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
 	<key>SUFeedURL</key>

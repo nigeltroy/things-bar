@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let sparkle = SparkleUpdater()
             sparkleUpdater = sparkle
             UpdateActions.installer = { sparkle.install($0) }
+            UpdateActions.progress = sparkle.progress
         }
         if SelfTest.isActive && !SelfTest.useLiveThings {
             panelState.verifyToken = { $0 == "fixture-token" ? .valid : .invalid(TokenCheck.rejected) }

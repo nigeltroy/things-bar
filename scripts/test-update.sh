@@ -39,7 +39,7 @@ make_copy() {
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $TEST_ID" -c "Delete :CFBundleURLTypes" \
     -c "Add :LSEnvironment dict" -c "Add :LSEnvironment:THINGSBAR_UPDATE_TEST string 1" \
     -c "Add :LSEnvironment:THINGSBAR_FEED_URL string $FEED/appcast.xml" \
-    -c "Add :SUAllowsAutomaticUpdates bool true" \
+    -c "Add :LSEnvironment:THINGSBAR_UPDATE_LOG string $WORK/phases.log" \
     -c "Add :NSAppTransportSecurity dict" -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
   codesign --force --deep --sign - build/ThingsBar.app 2>/dev/null
   rm -rf "$3"; ditto build/ThingsBar.app "$3"
@@ -75,8 +75,10 @@ open -n "$OLD"
 if [[ -n "${TAMPER:-}" ]]; then
   sleep 30
   v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$OLD/Contents/Info.plist")
-  [[ "$v" == "0.0.1" ]] && echo "PASS: tampered update rejected, still 0.0.1" && exit 0
-  echo "FAIL: tampered update installed ($v)" >&2; exit 1
+  [[ "$v" == "0.0.1" ]] || { echo "FAIL: tampered update installed ($v)" >&2; exit 1; }
+  # ThingsBar must say so, not stay on "Downloading…".
+  grep -q '^failed' "$WORK/phases.log" || { echo "FAIL: no error shown; phases: $(tr '\n' ' ' < "$WORK/phases.log")" >&2; exit 1; }
+  echo "PASS: tampered update rejected, still 0.0.1; shown: $(grep '^failed' "$WORK/phases.log")"; exit 0
 fi
 
 for _ in {1..90}; do
@@ -86,7 +88,7 @@ for _ in {1..90}; do
     for _ in {1..20}; do pgrep -f "$OLD/Contents/MacOS/ThingsBar" >/dev/null && break; sleep 0.5; done
     codesign --verify --strict --deep "$OLD"
     pgrep -f "$OLD/Contents/MacOS/ThingsBar" >/dev/null \
-      && echo "PASS: replaced with 9.0.0 and relaunched" && exit 0
+      && echo "PASS: replaced with 9.0.0 and relaunched; phases: $(tr '\n' ' ' < "$WORK/phases.log")" && exit 0
     echo "FAIL: replaced with 9.0.0 but not relaunched" >&2; exit 1
   fi
 done

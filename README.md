@@ -28,7 +28,9 @@ complete, edit, schedule, cancel and delete to-dos without opening Things.
   release; ThingsBar also checks on its own at most once a day (can be turned off).
   When a newer version exists, the footer says so, and **Install** (in Settings or the
   quick menu) downloads it, checks its signature, quits, replaces ThingsBar and
-  reopens it, with [Sparkle](https://sparkle-project.org)'s standard progress window.
+  reopens it, using [Sparkle](https://sparkle-project.org). Settings and the panel
+  footer show the progress; if the install fails, Settings says why and offers the
+  download in the browser.
 - **Keyboard:** ↑/↓ highlight a to-do, Space completes it, →/← show or hide its notes, Return edits it, ⌘⌫
   trashes it, ⌘↑/⌘↓ and ⌥⌘↑/⌥⌘↓ move it, ⌘Z undoes, ⌘N new to-do, ⌘, settings,
   Esc back or close, ⌘Q quit.
