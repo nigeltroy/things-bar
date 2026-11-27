@@ -6,7 +6,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var filter = TodoFilter()
     /// How often to re-read Things while idle, in seconds.
     public var refreshSeconds: Int = 30
-    /// Longest menu bar title before truncating with "…".
+    /// How many of the top to-dos the menu bar shows (1–3), separated by " | ".
+    public var menuBarItemCount: Int = 1
+    /// Longest title per to-do in the menu bar before truncating with "…".
     public var menuBarTitleLength: Int = 32
     /// Append the number of remaining to-dos, e.g. "Write report  +4".
     public var showCountInMenuBar = false
@@ -26,6 +28,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         source = try c.decodeIfPresent(ThingsSource.self, forKey: .source) ?? d.source
         filter = try c.decodeIfPresent(TodoFilter.self, forKey: .filter) ?? d.filter
         refreshSeconds = try c.decodeIfPresent(Int.self, forKey: .refreshSeconds) ?? d.refreshSeconds
+        menuBarItemCount = try c.decodeIfPresent(Int.self, forKey: .menuBarItemCount) ?? d.menuBarItemCount
         menuBarTitleLength = try c.decodeIfPresent(Int.self, forKey: .menuBarTitleLength) ?? d.menuBarTitleLength
         showCountInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .showCountInMenuBar) ?? d.showCountInMenuBar
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
@@ -56,14 +59,23 @@ public final class UserDefaultsSettings: SettingsPersisting, @unchecked Sendable
 /// Text shown in the menu bar.
 public enum MenuBarTitle {
     public static let emptyTitle = "All clear"
+    public static let separator = " | "
 
-    public static func make(top: TodoItem?, remaining: Int, settings: AppSettings) -> String {
-        guard let top else { return emptyTitle }
-        var title = top.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.isEmpty { title = "Untitled" }
+    /// The first `settings.menuBarItemCount` to-dos, each truncated, joined by " | ",
+    /// plus "+N" for the rest when the count is turned on.
+    public static func make(items: [TodoItem], settings: AppSettings) -> String {
+        guard !items.isEmpty else { return emptyTitle }
+        let shown = items.prefix(min(max(settings.menuBarItemCount, 1), 3))
         let limit = max(settings.menuBarTitleLength, 4)
-        if title.count > limit { title = String(title.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" }
-        if settings.showCountInMenuBar && remaining > 1 { title += "  +\(remaining - 1)" }
+        var title = shown.map { item in
+            var t = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            if t.isEmpty { t = "Untitled" }
+            if t.count > limit { t = String(t.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" }
+            return t
+        }.joined(separator: separator)
+        let rest = items.count - shown.count
+        if settings.showCountInMenuBar && rest > 0 { title += "  +\(rest)" }
         return title
     }
 }

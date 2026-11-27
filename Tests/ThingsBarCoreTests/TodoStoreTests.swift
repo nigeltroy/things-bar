@@ -70,10 +70,11 @@ struct TodoStoreTests {
         var s = AppSettings()
         s.menuBarTitleLength = 10
         let long = TodoItem(id: "x", title: "A very long to-do title")
-        #expect(MenuBarTitle.make(top: long, remaining: 1, settings: s) == "A very lo…") // 10 characters including the ellipsis
+        #expect(MenuBarTitle.make(items: [long], settings: s) == "A very lo…") // 10 characters including the ellipsis
         s.showCountInMenuBar = true
-        #expect(MenuBarTitle.make(top: TodoItem(id: "y", title: "Short"), remaining: 5, settings: s) == "Short  +4")
-        #expect(MenuBarTitle.make(top: TodoItem(id: "y", title: "  "), remaining: 1, settings: s) == "Untitled")
+        let five = (1...5).map { TodoItem(id: "\($0)", title: $0 == 1 ? "Short" : "Item \($0)") }
+        #expect(MenuBarTitle.make(items: five, settings: s) == "Short  +4")
+        #expect(MenuBarTitle.make(items: [TodoItem(id: "y", title: "  ")], settings: s) == "Untitled")
     }
 
     @Test func settingsDecodeToleratesMissingFields() throws {
@@ -162,5 +163,32 @@ struct TodoStoreActionTests {
         await store.moveToTop(store.items[1])
         #expect(store.items.map(\.id) == ["a", "b"])
         #expect(store.errorMessage != nil)
+    }
+
+    @Test func menuBarShowsTopOneToThreeItems() {
+        var s = AppSettings()
+        let items = ["Write report", "Buy milk", "Call mum", "Water plants"].enumerated()
+            .map { TodoItem(id: "\($0.offset)", title: $0.element) }
+        #expect(MenuBarTitle.make(items: items, settings: s) == "Write report")
+        s.menuBarItemCount = 2
+        #expect(MenuBarTitle.make(items: items, settings: s) == "Write report | Buy milk")
+        s.menuBarItemCount = 3
+        #expect(MenuBarTitle.make(items: items, settings: s) == "Write report | Buy milk | Call mum")
+        s.showCountInMenuBar = true
+        #expect(MenuBarTitle.make(items: items, settings: s) == "Write report | Buy milk | Call mum  +1")
+        #expect(MenuBarTitle.make(items: Array(items.prefix(2)), settings: s) == "Write report | Buy milk", "fewer to-dos than slots")
+        s.menuBarTitleLength = 6 // truncation applies per to-do
+        #expect(MenuBarTitle.make(items: Array(items.prefix(2)), settings: s) == "Write… | Buy m…")
+        s.menuBarItemCount = 9 // clamped to 3
+        s.showCountInMenuBar = false
+        #expect(MenuBarTitle.make(items: items, settings: s).components(separatedBy: " | ").count == 3)
+        #expect(MenuBarTitle.make(items: [TodoItem(id: "n", title: "Line one\nline two")], settings: AppSettings()) == "Line one line two")
+    }
+
+    @Test func oldSettingsDecodeWithItemCountDefault() throws {
+        let old = #"{"menuBarTitleLength":20,"showCountInMenuBar":true}"#.data(using: .utf8)!
+        let s = try JSONDecoder().decode(AppSettings.self, from: old)
+        #expect(s.menuBarItemCount == 1)
+        #expect(s.menuBarTitleLength == 20)
     }
 }

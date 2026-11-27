@@ -27,7 +27,7 @@ public final class TodoStore {
     public var visibleItems: [TodoItem] { settings.filter.apply(to: items) }
     public var topItem: TodoItem? { visibleItems.first }
     public var menuBarTitle: String {
-        MenuBarTitle.make(top: topItem, remaining: visibleItems.count, settings: settings)
+        MenuBarTitle.make(items: visibleItems, settings: settings)
     }
 
     @ObservationIgnored public let client: ThingsClient

@@ -19,8 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: "ThingsBar")
-            button.imagePosition = .imageLeading
+            button.imagePosition = .noImage // text only: the to-do titles are the UI
+            button.setAccessibilityLabel("ThingsBar")
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Keeps the menu bar title in sync with the store via Observation.
     private func observeTitle() {
         withObservationTracking {
-            statusItem.button?.title = " " + store.menuBarTitle
+            statusItem.button?.title = store.menuBarTitle
             statusItem.button?.toolTip = store.errorMessage ?? store.topItem?.title
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }

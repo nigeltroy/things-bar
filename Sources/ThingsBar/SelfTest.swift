@@ -119,6 +119,17 @@ enum SelfTest {
             await s.update(s.items[0], changes: TodoChanges(title: "Draft the Q1 planning doc"))
         })
         out.append(await step("delete", d) { await s.delete(s.items.last!); return true })
+        out.append(await step("menu bar shows top 3", d) {
+            s.settings.menuBarItemCount = 3
+            try? await Task.sleep(for: .milliseconds(50))
+            let title = d.statusItem.button?.title ?? ""
+            return title.components(separatedBy: " | ").count == 3 && d.statusItem.button?.image == nil
+        })
+        out.append(await step("menu bar back to 1", d) {
+            s.settings.menuBarItemCount = 1
+            try? await Task.sleep(for: .milliseconds(50))
+            return !(d.statusItem.button?.title ?? "").contains(" | ")
+        })
         out.append(await step("filter Home", d) { s.settings.filter.includeTags = ["Home"]; return true })
         return out
     }
