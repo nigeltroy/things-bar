@@ -71,6 +71,7 @@ private struct KeyboardShortcuts: View {
             Button("") { state.route = state.route == .settings ? .list : .settings }.keyboardShortcut(",", modifiers: .command)
             Button("") { _ = state.back() }.keyboardShortcut("[", modifiers: .command)
             Button("") { Task { await store.refresh() } }.keyboardShortcut("r", modifiers: .command)
+            Button("") { Task { await store.undo() } }.keyboardShortcut("z", modifiers: .command)
             Button("") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
             // Same shortcuts as Things: ⌘↑/↓ move, ⌥⌘↑/↓ move to top/bottom.
             Button("") { move { i, _ in i - 1 } }.keyboardShortcut(.upArrow, modifiers: .command)
@@ -157,7 +158,16 @@ struct FooterStatus: View {
 
     var body: some View {
         Group {
-            if store.isSyncingOrder || store.hasPendingOrder {
+            if let undo = store.undoAction {
+                HStack(spacing: 8) {
+                    Text(undo.label).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .truncationMode(.middle)
+                    Button("Undo") { Task { await store.undo() } }
+                        .buttonStyle(SoftButtonStyle()).controlSize(.small)
+                        .help("Undo (⌘Z)")
+                }
+                .transition(.opacity)
+            } else if store.isSyncingOrder || store.hasPendingOrder {
                 label("Saving order to Things…")
             } else if store.orderJustSaved {
                 label("Order saved in Things")
@@ -560,6 +570,8 @@ struct TodoRow: View {
 
     /// Show the check for a moment so the completion is visible, then complete.
     private func completeWithBeat() {
+        // A row just disappeared and this one slid under the pointer: ignore the click.
+        if let last = store.lastRemoval, Date().timeIntervalSince(last) < 0.6 { return }
         withAnimation(.easeOut(duration: 0.15)) { checked = true }
         Task {
             try? await Task.sleep(for: .milliseconds(350))

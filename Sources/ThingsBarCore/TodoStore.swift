@@ -117,10 +117,17 @@ public final class TodoStore {
         guard canReorder,
               let order = ReorderPlan.moveVisible(id: item.id, toGap: gap, visible: visibleItems.map(\.id), all: items.map(\.id))
         else { return }
+        let previous = items.map(\.id)
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         items = order.compactMap { byID[$0] }
         hasPendingOrder = true
         orderJustSaved = false
+        // A burst of moves undoes as one: keep the order from before the first move.
+        if case let .reorder(earlier, source)? = undoAction?.kind, source == settings.source, isBusyReordering, earlier != previous {
+            offerUndo(UndoAction(label: "Reordered", kind: .reorder(previous: earlier, source: source)))
+        } else {
+            offerUndo(UndoAction(label: "Reordered", kind: .reorder(previous: previous, source: settings.source)))
+        }
         scheduleOrderSync()
     }
 
@@ -208,9 +215,88 @@ public final class TodoStore {
         return ok
     }
 
-    public func complete(_ item: TodoItem) async { await removeOptimistically(item) { try await self.client.complete(id: item.id) } }
-    public func cancel(_ item: TodoItem) async { await removeOptimistically(item) { try await self.client.cancel(id: item.id) } }
-    public func delete(_ item: TodoItem) async { await removeOptimistically(item) { try await self.client.delete(id: item.id) } }
+    public func complete(_ item: TodoItem) async {
+        let order = items.map(\.id)
+        await removeOptimistically(item, { try await self.client.complete(id: item.id) }) {
+            self.offerUndo(UndoAction(label: "Completed \u{201C}\(item.title)\u{201D}", kind: .reopen(item, order: order)))
+        }
+    }
+
+    public func cancel(_ item: TodoItem) async {
+        let order = items.map(\.id)
+        await removeOptimistically(item, { try await self.client.cancel(id: item.id) }) {
+            self.offerUndo(UndoAction(label: "Canceled \u{201C}\(item.title)\u{201D}", kind: .reopen(item, order: order)))
+        }
+    }
+
+    public func delete(_ item: TodoItem) async {
+        let order = items.map(\.id), source = settings.source
+        await removeOptimistically(item, { try await self.client.delete(id: item.id) }) {
+            guard let target = UndoSupport.restoreTarget(for: item, from: source) else { return }
+            self.offerUndo(UndoAction(label: "Moved \u{201C}\(item.title)\u{201D} to Trash",
+                                      kind: .restore(item, source: source, target: target, order: order)))
+        }
+    }
+
+    // MARK: - Undo
+
+    /// The last action that can be taken back, shown with an Undo button for a few seconds.
+    public struct UndoAction: Sendable {
+        public enum Kind: Sendable {
+            case reopen(TodoItem, order: [String])
+            case restore(TodoItem, source: ThingsSource, target: ThingsSource, order: [String])
+            case reorder(previous: [String], source: ThingsSource)
+        }
+        public let label: String
+        public let kind: Kind
+        let id = UUID()
+    }
+
+    public private(set) var undoAction: UndoAction?
+    @ObservationIgnored public var undoTimeout: Duration = .seconds(8)
+
+    private func offerUndo(_ action: UndoAction) {
+        undoAction = action
+        let timeout = undoTimeout
+        Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            if self?.undoAction?.id == action.id { self?.undoAction = nil }
+        }
+    }
+
+    public func dismissUndo() { undoAction = nil }
+
+    /// Takes back the last complete, cancel, trash or reorder.
+    public func undo() async {
+        guard let action = undoAction else { return }
+        undoAction = nil
+        switch action.kind {
+        case let .reopen(item, order):
+            if await perform({ try await self.client.reopen(id: item.id) }) {
+                await refresh()
+                restoreOrder(order)
+            }
+        case let .restore(item, source, target, order):
+            if await perform({ try await self.client.restore(id: item.id, to: target) }) {
+                await refresh()
+                if source == settings.source { restoreOrder(order) }
+            }
+        case let .reorder(previous, source):
+            if source == settings.source { restoreOrder(previous) }
+        }
+    }
+
+    /// Puts the list back in `ids` order (where ThingsBar can reorder), syncing to Things.
+    private func restoreOrder(_ ids: [String]) {
+        guard canReorder else { return }
+        let current = items.map(\.id)
+        let wanted = ids.filter(current.contains) + current.filter { !ids.contains($0) }
+        guard wanted != current else { return }
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        items = wanted.compactMap { byID[$0] }
+        hasPendingOrder = true
+        scheduleOrderSync()
+    }
 
     /// Applies only the fields that actually differ from `item`.
     @discardableResult
@@ -229,14 +315,23 @@ public final class TodoStore {
     }
 
     /// Hides the row immediately; puts it back if Things refuses.
-    private func removeOptimistically(_ item: TodoItem, _ action: @escaping () async throws -> Void) async {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+    /// When a row last disappeared: the row below slides under the pointer, so the UI
+    /// briefly ignores checkbox clicks to stop a double click completing it too.
+    public private(set) var lastRemoval: Date?
+
+    /// `onSuccess` runs as soon as Things confirms, before the re-read, so Undo shows at once.
+    @discardableResult
+    private func removeOptimistically(_ item: TodoItem, _ action: @escaping () async throws -> Void,
+                                      onSuccess: () -> Void = {}) async -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return false }
+        lastRemoval = Date()
         pendingIDs.insert(item.id)
         items.remove(at: index)
         let ok = await perform(action)
         pendingIDs.remove(item.id)
-        if !ok { items.insert(item, at: min(index, items.count)) }
+        if ok { onSuccess() } else { items.insert(item, at: min(index, items.count)) }
         await refresh()
+        return ok
     }
 
     @discardableResult

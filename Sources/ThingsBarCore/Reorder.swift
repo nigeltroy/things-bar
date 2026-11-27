@@ -65,3 +65,21 @@ public enum ReorderPlan {
         return gap == from || gap == from + 1 ? nil : gap
     }
 }
+
+/// What ThingsBar can take back.
+public enum UndoSupport {
+    /// The list a trashed to-do is moved back into (AppleScript `move`), or nil if it
+    /// can't be restored faithfully. Things refuses moving a to-do into a project or
+    /// area directly, but moving it into Today or Anytime keeps its project and area.
+    public static func restoreTarget(for item: TodoItem, from source: ThingsSource, now: Date = Date()) -> ThingsSource? {
+        switch source.kind {
+        case .list:
+            return [ThingsSource.today, .inbox, .anytime, .someday].contains(source) ? source : nil
+        case .project, .area:
+            guard let start = item.startDate else { return .anytime }
+            return Calendar.current.startOfDay(for: start) <= now ? .today : nil // a future date would be lost
+        case .tag:
+            return nil
+        }
+    }
+}

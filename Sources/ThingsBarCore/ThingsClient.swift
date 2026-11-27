@@ -15,6 +15,10 @@ public protocol ThingsClient: Sendable {
     func cancel(id: String) async throws
     /// Moves the to-do to Things' Trash.
     func delete(id: String) async throws
+    /// Marks a completed or canceled to-do open again (it keeps its place).
+    func reopen(id: String) async throws
+    /// Moves a to-do out of the Trash into `list` (a built-in list; see `UndoSupport.restoreTarget`).
+    func restore(id: String, to list: ThingsSource) async throws
     /// Opens the to-do in Things (brings Things to the front).
     func reveal(id: String) async throws
     /// Moves a to-do to the top of `source`. Only lists where `ReorderPlan.isSupported`
@@ -171,6 +175,13 @@ public final class LiveThingsClient: ThingsClient {
 
     public func delete(id: String) async throws {
         try await transport.send({ ThingsEvent.delete(Specifier.byID(Code.todo, id)) }, decode: { _ in () })
+    }
+
+    public func reopen(id: String) async throws { try await setStatus(id: id, Code.open) }
+
+    public func restore(id: String, to list: ThingsSource) async throws {
+        try await transport.send({ ThingsEvent.move(Specifier.byID(Code.todo, id), to: Specifier.container(for: list)) },
+                                 decode: { _ in () })
     }
 
     public func reveal(id: String) async throws {

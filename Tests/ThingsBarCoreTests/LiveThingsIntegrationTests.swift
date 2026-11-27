@@ -184,4 +184,53 @@ struct LiveThingsIntegrationTests {
         #expect(othersAfter == othersBefore.filter { !ids.contains($0) }, "other to-dos keep their order")
         for item in store.items where item.title.hasPrefix(tag) { try await client.delete(id: item.id) }
     }
+
+    /// Undo through the store against the real Things: complete, trash (restored to a
+    /// project and to Today with its project kept) and reorder.
+    @MainActor @Test func undoRoundTrips() async throws {
+        let project = try #require(try await client.catalog().projects.first)
+        let titles = ["\(tag) undo A", "\(tag) undo B"]
+        try await client.add(TodoDraft(title: titles[0]), to: .today)
+        try await client.add(TodoDraft(title: titles[1]), to: .today) // B above A
+        let settings = MemorySettings()
+        settings.stored.filter.searchText = tag
+        let store = TodoStore(client: client, persistence: settings)
+        store.hasAuthToken = token != nil
+        store.orderSyncDelay = .milliseconds(50)
+        await store.refresh()
+        func order() async throws -> [String] { try await client.todos(in: .today).map(\.title).filter { $0.hasPrefix(tag) } }
+
+        // Complete → undo: back in Today, same place.
+        await store.complete(try #require(store.visibleItems.first { $0.title == titles[0] }))
+        #expect(try await order() == [titles[1]])
+        await store.undo(); await store.waitForOrderSync()
+        #expect(try await order() == [titles[1], titles[0]])
+
+        // Trash → undo: restored to Today in its old place.
+        await store.delete(try #require(store.visibleItems.first { $0.title == titles[1] }))
+        #expect(try await order() == [titles[0]])
+        await store.undo(); await store.waitForOrderSync()
+        #expect(try await order() == [titles[1], titles[0]])
+        #expect(store.errorMessage == nil, "\(store.errorMessage ?? "")")
+
+        // Reorder → undo.
+        store.moveVisible(try #require(store.visibleItems.first { $0.title == titles[0] }), toGap: 0)
+        await store.waitForOrderSync()
+        #expect(try await order() == [titles[0], titles[1]])
+        await store.undo(); await store.waitForOrderSync()
+        #expect(try await order() == [titles[1], titles[0]])
+
+        // Trash from a project → restore keeps it in the project.
+        let inProject = "\(tag) undo project"
+        try await client.add(TodoDraft(title: inProject), to: project)
+        let pItem = try #require(try await client.todos(in: project).first { $0.title == inProject })
+        try await client.delete(id: pItem.id)
+        let target = try #require(UndoSupport.restoreTarget(for: pItem, from: project))
+        #expect(target == .anytime)
+        try await client.restore(id: pItem.id, to: target)
+        #expect(try await client.todos(in: project).contains { $0.id == pItem.id })
+
+        for item in try await client.todos(in: .today) where item.title.hasPrefix(tag) { try await client.delete(id: item.id) }
+        try await client.delete(id: pItem.id)
+    }
 }

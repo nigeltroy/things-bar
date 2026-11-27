@@ -55,9 +55,25 @@ public actor InMemoryThingsClient: ThingsClient {
         log.append("update \(id)")
     }
 
+    /// Removed to-dos and where they were, so reopen/restore can put them back.
+    private var removed: [String: (source: String, index: Int, item: TodoItem)] = [:]
+
     public func complete(id: String) async throws { try check(); remove(id); log.append("complete \(id)") }
     public func cancel(id: String) async throws { try check(); remove(id); log.append("cancel \(id)") }
     public func delete(id: String) async throws { try check(); remove(id); log.append("delete \(id)") }
+
+    public func reopen(id: String) async throws {
+        try check()
+        if let r = removed.removeValue(forKey: id) { items[r.source, default: []].insert(r.item, at: min(r.index, items[r.source, default: []].count)) }
+        log.append("reopen \(id)")
+    }
+
+    public func restore(id: String, to list: ThingsSource) async throws {
+        try check()
+        // Things keeps the to-do's project; the fake puts it back where it was, first.
+        if let r = removed.removeValue(forKey: id) { items[r.source, default: []].insert(r.item, at: 0) }
+        log.append("restore \(id)")
+    }
     public func reveal(id: String) async throws { try check(); log.append("reveal \(id)") }
 
     public func moveToTop(id: String, in source: ThingsSource) async throws {
@@ -76,6 +92,11 @@ public actor InMemoryThingsClient: ThingsClient {
     }
 
     private func remove(_ id: String) {
-        for key in items.keys { items[key]!.removeAll { $0.id == id } }
+        for key in items.keys {
+            if let i = items[key]!.firstIndex(where: { $0.id == id }) {
+                removed[id] = (key, i, items[key]![i])
+                items[key]!.remove(at: i)
+            }
+        }
     }
 }
