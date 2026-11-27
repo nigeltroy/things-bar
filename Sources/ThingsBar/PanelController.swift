@@ -98,6 +98,7 @@ final class PanelController: NSObject {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.alphaValue = reduceMotion ? 1 : 0
         panel.makeKeyAndOrderFront(nil)
+        refreshShadow()
         if !reduceMotion {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.12
@@ -146,6 +147,20 @@ final class PanelController: NSObject {
             frame.origin.y = panel.frame.maxY - size.height
         }
         panel.setFrame(frame, display: true)
+        refreshShadow()
+    }
+
+    /// The window server takes a borderless window's shadow (and its thin dark rim) from
+    /// the pixels drawn at the time. Taken before the glass has drawn its rounded corners,
+    /// it's the full rectangle: a sharp-cornered border around the panel. Recompute it
+    /// once the new content has drawn.
+    private func refreshShadow() {
+        panel.invalidateShadow()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.panel.display()
+            self.panel.invalidateShadow()
+        }
     }
 
     private func startMonitoringOutsideClicks() {

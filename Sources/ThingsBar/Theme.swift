@@ -27,7 +27,7 @@ enum Theme {
     /// own, much fainter placeholder color.
     static let placeholder = ink(0.72, 0.64, contrast: 0.84, 0.78)
     /// Glyphs only, never text: 3:1, the minimum for meaningful graphics.
-    static let textTertiary = ink(0.48, 0.48, contrast: 0.62, 0.62)
+    static let textTertiary = ink(0.48, 0.52, contrast: 0.62, 0.64)
     /// Outline of text fields, so an empty field is visible as a field.
     static let fieldBorder = ink(0.12, 0.12, contrast: 0.35, 0.35)
     static let fieldBorderFocused = ink(0.30, 0.30, contrast: 0.55, 0.55)

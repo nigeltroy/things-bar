@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ThingsBarInfo {
-    public static let version = "0.6.1"
+    public static let version = "0.6.2"
 }
 
 /// An open to-do as read from Things.
