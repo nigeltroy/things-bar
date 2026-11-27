@@ -25,6 +25,15 @@ public actor InMemoryThingsClient: ThingsClient {
         try check(); return items[source.id] ?? []
     }
 
+    public func changeToken(in source: ThingsSource) async throws -> String? {
+        // Deliberately ignores failNextCall, which tests aim at the read that follows.
+        return (items[source.id] ?? []).map { "\($0.id)|\($0.title)|\($0.notes)|\($0.tags)|\(String(describing: $0.deadline))" }
+            .joined(separator: ",")
+    }
+
+    /// Simulates the user changing a list in Things itself (e.g. reordering).
+    public func setItems(_ list: [TodoItem], for source: ThingsSource) { items[source.id] = list }
+
     public func add(_ draft: TodoDraft, to source: ThingsSource) async throws {
         try check()
         let item = TodoItem(id: "mem-\(nextID)", title: draft.title, notes: draft.notes, tags: draft.tags,

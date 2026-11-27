@@ -120,4 +120,27 @@ struct LiveThingsIntegrationTests {
         #expect(titles.prefix(2) == [a, b])
         for title in [a, b] { if let item = try await find(title) { try await client.delete(id: item.id) } }
     }
+
+    @Test func changeTokenTracksOrderAndEdits() async throws {
+        let a = "\(tag) token A", b = "\(tag) token B"
+        try await client.add(TodoDraft(title: a), to: .today)
+        try await client.add(TodoDraft(title: b), to: .today)
+        let itemA = try #require(try await find(a))
+        let t1 = try #require(try await client.changeToken(in: .today))
+        #expect(try await client.changeToken(in: .today) == t1, "stable while nothing changes")
+
+        try await client.moveToTopOfToday(id: itemA.id) // a reorder, as if dragged in Things
+        let t2 = try #require(try await client.changeToken(in: .today))
+        #expect(t2 != t1)
+
+        try await client.update(id: itemA.id, changes: TodoChanges(title: a + " renamed")) // a rename, at once
+        let t3 = try #require(try await client.changeToken(in: .today))
+        #expect(t3 != t2)
+
+        try await Task.sleep(for: .seconds(1.1)) // modification dates have one-second resolution
+        try await client.update(id: itemA.id, changes: TodoChanges(notes: "edited")) // any other edit
+        #expect(try await client.changeToken(in: .today) != t3)
+        try await client.delete(id: itemA.id)
+        for title in [a, b] { if let item = try await find(title) { try await client.delete(id: item.id) } }
+    }
 }

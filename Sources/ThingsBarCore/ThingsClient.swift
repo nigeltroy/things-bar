@@ -5,6 +5,10 @@ public protocol ThingsClient: Sendable {
     func catalog() async throws -> SourceCatalog
     /// Open to-dos in Things' own order.
     func todos(in source: ThingsSource) async throws -> [TodoItem]
+    /// A cheap fingerprint of a source's to-dos: their order and modification dates.
+    /// It changes whenever anything in the list changes, including reordering in Things.
+    /// Returns nil if Things isn't running (never launches it).
+    func changeToken(in source: ThingsSource) async throws -> String?
     func add(_ draft: TodoDraft, to source: ThingsSource) async throws
     func update(id: String, changes: TodoChanges) async throws
     func complete(id: String) async throws
@@ -99,6 +103,26 @@ public final class LiveThingsClient: ThingsClient {
         }
     }
 
+    public func changeToken(in source: ThingsSource) async throws -> String? {
+        @Sendable func column(_ prop: FourCharCode) async throws -> [String] {
+            try await transport.send({
+                ThingsEvent.get(Specifier.property(prop, of: Specifier.every(Code.todo, in: Specifier.container(for: source))))
+            }, decode: { d in
+                Descriptor.list(d).map { Descriptor.date($0).map { String($0.timeIntervalSinceReferenceDate) } ?? Descriptor.string($0) ?? "∅" }
+            })
+        }
+        do {
+            // Modification dates have one-second resolution, so titles are included too.
+            let ids = try await column(Code.id)
+            let modified = try await column(Code.modificationDate)
+            let names = try await column(Code.name)
+            guard ids.count == modified.count, ids.count == names.count else { return UUID().uuidString } // changed mid-read
+            return ids.indices.map { "\(ids[$0])@\(modified[$0])#\(names[$0])" }.joined(separator: "\u{1F}")
+        } catch ThingsError.thingsNotRunning {
+            return nil
+        }
+    }
+
     /// Builds to-dos from property columns, keeping only open ones, in Things' order.
     static func decodeTodos(_ c: [[NSAppleEventDescriptor]]) throws -> [TodoItem] {
         guard c.count == todoProperties.count else {
@@ -154,9 +178,12 @@ public final class LiveThingsClient: ThingsClient {
     }
 
     public func moveToTopOfToday(id: String) async throws {
-        try await update(id: id, changes: TodoChanges(when: .evening))
-        try await update(id: id, changes: TodoChanges(when: .today))
-        // Confirm the side effect we rely on actually happened.
+        guard let token = authToken(), !token.isEmpty else { throw ThingsError.missingAuthToken }
+        // Not verified step by step: both steps can land within the same second, so the
+        // modification date may not change between them. Things handles URLs in order;
+        // the final position is what we check.
+        try await opener.open(ThingsURL.update(id: id, changes: TodoChanges(when: .evening), authToken: token), activate: false)
+        try await opener.open(ThingsURL.update(id: id, changes: TodoChanges(when: .today), authToken: token), activate: false)
         try await waitUntil { try await self.todos(in: .today).first?.id == id }
     }
 

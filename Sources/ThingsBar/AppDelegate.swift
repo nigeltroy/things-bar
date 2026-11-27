@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var tokenStore: TokenStoring!
     private(set) var settingsWindow: SettingsWindowController!
     private var refreshTimer: Timer?
+    private var changeTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
@@ -32,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         observeTitle()
         observeRefreshInterval()
+        watchForChanges()
         observeAppearance()
         Task { await store.refresh() }
 
@@ -61,6 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.observeRefreshInterval() }
         }
         scheduleRefresh(every: seconds)
+    }
+
+    /// Things has no change notifications, so poll a cheap fingerprint every 2 s and
+    /// refresh only when it differs (e.g. after reordering in Things).
+    private func watchForChanges() {
+        changeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.store.checkForChanges() }
+        }
+        changeTimer?.tolerance = 0.5
     }
 
     private func scheduleRefresh(every seconds: Int) {

@@ -158,6 +158,20 @@ enum SelfTest {
             await s.delete(item)
             return find(item.title) == nil
         })
+        // A reorder made outside ThingsBar (as if dragged in Things) must reach the menu
+        // bar through the app's own change polling, with no explicit refresh.
+        out.append(await step("add four, five", d) {
+            let a = await s.add(TodoDraft(title: "\(tag) four"))
+            let b = await s.add(TodoDraft(title: "\(tag) five"))
+            return a && b && s.topItem?.title == "\(tag) five"
+        })
+        out.append(await step("external reorder shows up", d) {
+            guard let four = find("\(tag) four") else { return false }
+            do { try await s.client.moveToTopOfToday(id: four.id) } catch { return false }
+            try? await Task.sleep(for: .seconds(3)) // change polling runs every 2 s
+            return s.topItem?.title == "\(tag) four" && d.statusItem.button?.title.contains("\(tag) four") == true
+        })
+        for title in ["\(tag) four", "\(tag) five"] { if let item = find(title) { await s.delete(item) } }
         out.append(["tag": tag])
         return out
     }

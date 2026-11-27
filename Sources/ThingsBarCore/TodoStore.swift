@@ -33,6 +33,8 @@ public final class TodoStore {
     @ObservationIgnored public let client: ThingsClient
     @ObservationIgnored private let persistence: SettingsPersisting
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    /// Fingerprint of the source at the last refresh (see `checkForChanges`).
+    @ObservationIgnored private var lastChangeToken: String?
     /// A successful refresh only clears errors that a refresh caused, not action errors.
     @ObservationIgnored private var errorCameFromRefresh = false
 
@@ -56,12 +58,15 @@ public final class TodoStore {
         defer { isLoading = false }
         let source = settings.source
         do {
+            // Read the fingerprint first: a change during the read then triggers one more refresh.
+            let token = try? await client.changeToken(in: source)
             async let cat = client.catalog()
             async let todos = client.todos(in: source)
             let (newCatalog, newItems) = try await (cat, todos)
             catalog = newCatalog
             guard source == settings.source else { return } // source changed mid-read
             items = newItems
+            lastChangeToken = token
             if errorCameFromRefresh { errorMessage = nil }
             lastRefresh = Date()
         } catch {
@@ -69,6 +74,18 @@ public final class TodoStore {
             errorCameFromRefresh = true
         }
     }
+
+    /// Cheap poll (two small Apple Events): refreshes only if the source changed in
+    /// Things since the last refresh. Skipped while ThingsBar itself is changing things.
+    public func checkForChanges() async {
+        guard refreshTask == nil, pendingIDs.isEmpty, !isAdding, !isBusyReordering else { return }
+        let source = settings.source
+        guard let token = try? await client.changeToken(in: source), source == settings.source else { return }
+        if token != lastChangeToken { await refresh() }
+    }
+
+    /// Overridden by reordering (see Reorder section); false until then.
+    var isBusyReordering: Bool { false }
 
     public func dismissError() { errorMessage = nil; errorCameFromRefresh = false }
 
