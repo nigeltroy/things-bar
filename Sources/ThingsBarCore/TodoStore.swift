@@ -21,12 +21,51 @@ public final class TodoStore {
             persistence.save(settings)
             if settings.source != oldValue.source {
                 items = []
+                completed = []
                 Task { await refresh() }
             }
         }
     }
 
     public var visibleItems: [TodoItem] { settings.filter.apply(to: items) }
+
+    // MARK: - Completed (kept at the bottom)
+
+    /// A to-do completed from ThingsBar, kept under the open ones so a mistaken
+    /// completion is one click to take back.
+    public struct CompletedTodo: Sendable, Equatable {
+        public let item: TodoItem
+        /// The source's order before it was completed: reopening puts it back there.
+        public let order: [String]
+        public let date: Date
+    }
+
+    /// To-dos completed from ThingsBar today in the current source, oldest first.
+    /// Cleared when the source changes and at the start of a new day; one reopened in
+    /// Things drops out on the next read.
+    public private(set) var completed: [CompletedTodo] = []
+    /// The completed to-dos the filters let through, most recently completed last.
+    public var visibleCompleted: [TodoItem] { settings.filter.apply(to: completed.map(\.item)) }
+    public func isCompleted(_ item: TodoItem) -> Bool { completed.contains { $0.item.id == item.id } }
+
+    /// Drops completions from earlier days and any to-do that is open again.
+    private func pruneCompleted(openIDs: Set<String>, now: Date = Date()) {
+        let kept = completed.filter { Calendar.current.isDate($0.date, inSameDayAs: now) && !openIDs.contains($0.item.id) }
+        if kept != completed { completed = kept }
+    }
+
+    /// Marks a completed to-do open again and puts it back where it was.
+    public func reopenCompleted(_ item: TodoItem) async {
+        guard let entry = completed.first(where: { $0.item.id == item.id }), !pendingIDs.contains(item.id) else { return }
+        pendingIDs.insert(item.id)
+        let ok = await perform { try await self.client.reopen(id: item.id) }
+        pendingIDs.remove(item.id)
+        guard ok else { return }
+        completed.removeAll { $0.item.id == item.id }
+        if case let .reopen(undone, _)? = undoAction?.kind, undone.id == item.id { undoAction = nil }
+        await refresh()
+        restoreOrder(entry.order)
+    }
     public var topItem: TodoItem? { visibleItems.first }
     public var menuBarTitle: String {
         if items.isEmpty && lastRefresh == nil { return "ThingsBar" } // not read yet: "All clear" would be a guess
@@ -72,6 +111,7 @@ public final class TodoStore {
             guard source == settings.source else { return } // source changed mid-read
             guard !isBusyReordering else { return }          // keep the order the user just dropped
             items = newItems
+            pruneCompleted(openIDs: Set(newItems.map(\.id)))
             lastChangeToken = token
             if errorCameFromRefresh { errorMessage = nil }
             lastRefresh = Date()
@@ -225,11 +265,15 @@ public final class TodoStore {
         return ok
     }
 
+    /// Completes `item`. It moves under the open to-dos, checked, until the end of the day.
     public func complete(_ item: TodoItem) async {
-        let order = items.map(\.id)
-        await removeOptimistically(item, { try await self.client.complete(id: item.id) }) {
+        let order = items.map(\.id), source = settings.source
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        completed.append(CompletedTodo(item: item, order: order, date: Date()))
+        let ok = await removeOptimistically(item, { try await self.client.complete(id: item.id) }) {
             self.offerUndo(UndoAction(label: "Completed \u{201C}\(item.title)\u{201D}", kind: .reopen(item, order: order)))
         }
+        if !ok && source == settings.source { completed.removeAll { $0.item.id == item.id } }
     }
 
     public func cancel(_ item: TodoItem) async {
@@ -283,6 +327,7 @@ public final class TodoStore {
         switch action.kind {
         case let .reopen(item, order):
             if await perform({ try await self.client.reopen(id: item.id) }) {
+                completed.removeAll { $0.item.id == item.id }
                 await refresh()
                 restoreOrder(order)
             }

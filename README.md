@@ -15,7 +15,9 @@ complete, edit, schedule, cancel and delete to-dos without opening Things.
   inline editor. Drag rows to reorder them; the new order is saved to Things (Today
   and Inbox). Complete, cancel, trash and reorder can be undone from the footer or
   with ⌘Z. To-dos with notes have a **Notes** button (or →/←) that shows the notes
-  under the title.
+  under the title. Completed to-dos move to the bottom of the list, checked, until the
+  end of the day (or until you switch lists); click the check again to reopen one.
+  The menu bar only ever shows open to-dos.
 - **Settings** (gear, or ⌘,): shown inside the same panel. Source (built-in list,
   project, area or tag), filters, to-dos shown in the menu bar, title length,
   remaining count, appearance, open at login, and the Things auth token (stored in

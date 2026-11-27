@@ -254,7 +254,7 @@ struct TodoListView: View {
     private static let viewport = "thingsbar.list.viewport"
 
     var body: some View {
-        if store.visibleItems.isEmpty {
+        if store.visibleItems.isEmpty && store.visibleCompleted.isEmpty {
             EmptyStateView(loading: store.isLoading && store.lastRefresh == nil, filtered: store.settings.filter.isActive && !store.items.isEmpty)
         } else {
             ScrollViewReader { proxy in
@@ -308,7 +308,12 @@ struct TodoListView: View {
                 .id(item.id)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.content)) } action: { frames[item.id] = $0 }
             }
+            // Completed today from ThingsBar: at the bottom, checked, one click to reopen.
+            ForEach(store.visibleCompleted) { item in
+                CompletedRow(store: store, state: state, item: item).id("done:" + item.id)
+            }
         }
+        .animation(Theme.motion(.snappy(duration: 0.2)), value: store.completed.map(\.item.id))
     }
 
     // MARK: Drag state
@@ -627,6 +632,7 @@ struct TodoRow: View {
 
 struct Checkbox: View {
     let checked: Bool
+    var help = "Complete"
     let action: () -> Void
     @State private var hovering = false
 
@@ -647,8 +653,8 @@ struct Checkbox: View {
         }
         .buttonStyle(FocusRingButtonStyle(shape: Circle()))
         .onHover { hovering = $0 }
-        .help("Complete")
-        .accessibilityLabel("Complete")
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -737,6 +743,56 @@ struct NotesText: View {
             .padding(.leading, 25) // under the title: 16 pt checkbox + 9 pt gap
             .padding(.trailing, 4)
             .transition(.opacity)
+    }
+}
+
+/// A to-do completed from ThingsBar today: checked and struck through under the open
+/// ones. Its checkbox reopens it and puts it back where it was.
+struct CompletedRow: View {
+    let store: TodoStore
+    let state: PanelState?
+    let item: TodoItem
+    @State private var hovering = false
+    private var pending: Bool { store.pendingIDs.contains(item.id) }
+    private var notesExpanded: Bool { !item.notes.isEmpty && (state?.expandedNotes.contains(item.id) ?? false) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 9) {
+                Checkbox(checked: true, help: "Mark as not completed") { Task { await store.reopenCompleted(item) } }
+                    .disabled(pending)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title.isEmpty ? "Untitled" : item.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textMuted)
+                        .strikethrough(true, color: Theme.textMuted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    MetaLine(item: item, catalog: store.catalog, source: store.settings.source, notesExpanded: notesExpanded,
+                             toggleNotes: state == nil ? nil : {
+                                 withAnimation(Theme.motion(.snappy(duration: 0.18))) { state?.toggleNotes(item.id) }
+                             })
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if pending { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 24, height: 18) }
+            }
+            if notesExpanded { NotesText(notes: item.notes) }
+        }
+        .padding(.horizontal, Theme.textInset).padding(.vertical, 6)
+        .frame(minHeight: 30)
+        .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(hovering ? Theme.hoverFill : .clear))
+        .contentShape(Rectangle())
+        .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
+        .contextMenu {
+            Button("Mark as Not Completed") { Task { await store.reopenCompleted(item) } }
+            Button("Open in Things") { Task { await store.reveal(item) } }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue("Completed")
+        .accessibilityActions {
+            Button("Mark as Not Completed") { Task { await store.reopenCompleted(item) } }
+        }
     }
 }
 

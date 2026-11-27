@@ -82,7 +82,7 @@ enum SelfTest {
             report["statusItemHasImage"] = delegate.statusItem.button?.image != nil
             write(json: report, to: dir.appendingPathComponent("status.json"))
             renderViews(delegate, dir)
-            await renderNotes(dir)
+            await renderNotesAndCompleted(dir)
             ContrastAudit.run(store: store(delegate), dir: dir) // writes contrast.json
 
             var steps: [[String: Any]] = []
@@ -162,17 +162,19 @@ enum SelfTest {
         }, to: dir.appendingPathComponent("error.png"))
     }
 
-    /// A row with its notes shown, and one with them hidden.
-    static func renderNotes(_ dir: URL) async {
+    /// A row with its notes shown, and a completed row under the open ones.
+    static func renderNotesAndCompleted(_ dir: URL) async {
         let items = [
             TodoItem(id: "n1", title: "Borrow from the line of credit to top up the RRSP",
                      notes: "Check the contribution room first.\nTransfer before the deadline, then file.", tags: ["Money"]),
             TodoItem(id: "n2", title: "Book the dentist", notes: "Ask about the cleaning"),
+            TodoItem(id: "n3", title: "Return the library books"),
         ]
         let store = TodoStore(client: InMemoryThingsClient(items: [.today: items]), persistence: ephemeralSettings())
         store.hasAuthToken = true
         let state = PanelState(); state.expandedNotes = ["n1"]
         await store.refresh()
+        await store.complete(items[2])
         for (name, dark) in [("notes.png", true), ("notes-light.png", false)] {
             snapshot(GlassPreview { TodoListView(store: store, state: state).frame(width: Theme.panelWidth) },
                      to: dir.appendingPathComponent(name), dark: dark)
@@ -222,7 +224,13 @@ enum SelfTest {
         let s = d.store!
         var out: [[String: Any]] = []
         out.append(await step("add", d) { await s.add(TodoDraft(title: "Water the plants")) })
-        out.append(await step("complete top", d) { await s.complete(s.topItem!); return true })
+        out.append(await step("complete top: kept at the bottom, not in the menu bar", d) {
+            let top = s.topItem!
+            await s.complete(top)
+            try? await Task.sleep(for: .milliseconds(50))
+            return s.visibleCompleted.map(\.id) == [top.id] && !s.visibleItems.contains(top)
+                && !(d.statusItem.button?.title ?? "").contains(top.title)
+        })
         out.append(await step("edit", d) {
             await s.update(s.items[0], changes: TodoChanges(title: "Draft the Q1 planning doc"))
         })
