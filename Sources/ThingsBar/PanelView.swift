@@ -229,9 +229,8 @@ struct TodoListView: View {
                     rows
                         .coordinateSpace(name: Self.content)
                         .overlay(alignment: .topLeading) { insertionIndicator }
-                        .onDrop(of: [.text], delegate: ReorderDropDelegate(list: self, proxy: proxy))
                         .onGeometryChange(for: CGFloat.self) { -$0.frame(in: .named(Self.viewport)).minY } action: { scrollOffset = $0 }
-                        .padding(.horizontal, Theme.edgeInset).padding(.vertical, 3)
+                        .padding(.horizontal, Theme.edgeInset).padding(.top, 3).padding(.bottom, 8)
                 }
                 .coordinateSpace(name: Self.viewport)
                 .scrollIndicators(.automatic)
@@ -239,6 +238,10 @@ struct TodoListView: View {
                 .frame(maxHeight: 440)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+                // The whole visible list, padding included, accepts drops: releasing a
+                // little below the last row means "to the bottom", as people expect.
+                .contentShape(Rectangle())
+                .onDrop(of: [.text], delegate: ReorderDropDelegate(list: self, proxy: proxy))
             }
         }
     }
@@ -254,6 +257,7 @@ struct TodoListView: View {
                         TodoRow(store: store, item: item, isTop: index == 0,
                                 edit: { state.editingID = item.id },
                                 highlighted: state.justMovedID == item.id,
+                                isDragged: draggingID == item.id,
                                 hoverChanged: { inside in
                                     if inside { state.hoveredID = item.id } else if state.hoveredID == item.id { state.hoveredID = nil }
                                 })
@@ -286,12 +290,14 @@ struct TodoListView: View {
         withAnimation(.easeOut(duration: 0.15)) { draggingID = nil; dropGap = nil }
     }
 
-    fileprivate func updateDrop(at y: CGFloat, proxy: ScrollViewProxy) {
+    /// `viewportY` is the pointer's height within the visible part of the list.
+    fileprivate func updateDrop(at viewportY: CGFloat, proxy: ScrollViewProxy) {
+        let y = viewportY + scrollOffset // in the rows' coordinates
         guard let id = draggingID, let from = store.visibleItems.firstIndex(where: { $0.id == id }) else { return }
         let mids = store.visibleItems.map { Double(frames[$0.id]?.midY ?? .infinity) }
         let newGap = ReorderPlan.dropGap(pointerY: y, rowMidYs: mids, from: from)
         if newGap != dropGap { withAnimation(.easeOut(duration: 0.1)) { dropGap = newGap } }
-        autoScroll(nearY: y - scrollOffset, proxy: proxy)
+        autoScroll(nearY: viewportY, proxy: proxy)
     }
 
     fileprivate func drop() -> Bool {
@@ -467,6 +473,8 @@ struct TodoRow: View {
     let edit: () -> Void
     /// Flash after being moved.
     var highlighted = false
+    /// The row is being dragged: dimmed in place, without hover actions.
+    var isDragged = false
     var hoverChanged: (Bool) -> Void = { _ in }
     /// Self-test only: render the hover state without a mouse.
     var forceHover = false
@@ -516,8 +524,8 @@ struct TodoRow: View {
                         IconButton(systemName: "pencil", help: "Edit", action: edit)
                         MoreMenu(store: store, item: item, edit: edit)
                     }
-                    .opacity(hovering ? 1 : 0)
-                    .allowsHitTesting(hovering)
+                    .opacity(hovering && !isDragged ? 1 : 0)
+                    .allowsHitTesting(hovering && !isDragged)
                 }
             }
             .padding(.top, 3).padding(.trailing, 4)
