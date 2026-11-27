@@ -169,4 +169,46 @@ struct TodoStoreActionTests {
         #expect(s.menuBarItemCount == 1)
         #expect(s.menuBarTitleLength == 20)
     }
+
+    @Test func menuBarFitsByMeasuredWidth() {
+        let measure: (String) -> Double = { Double($0.count) * 6 } // fake 6 pt per character
+        var s = AppSettings()
+        s.menuBarWidth = .narrow // 160 pt
+        let long = TodoItem(id: "l", title: String(repeating: "x", count: 60))
+        let fit = MenuBarTitle.make(items: [long], settings: s, measure: measure)
+        #expect(measure(fit) <= 160 && fit.hasSuffix("…"))
+        #expect(fit.count == 26, "fills the room: 25 characters + …")
+
+        // Three to-dos: short ones keep their full text, the long one takes the rest.
+        s.menuBarItemCount = 3
+        let items = [TodoItem(id: "a", title: "Gym"), long, TodoItem(id: "c", title: "Call mum")]
+        let three = MenuBarTitle.make(items: items, settings: s, measure: measure)
+        #expect(three.hasPrefix("Gym | x") && three.hasSuffix("… | Call mum"))
+        #expect(measure(three) <= 160)
+
+        // The "+N" count is part of the budget.
+        s.showCountInMenuBar = true
+        let counted = MenuBarTitle.make(items: items + [TodoItem(id: "d", title: "d")], settings: s, measure: measure)
+        #expect(counted.hasSuffix("  +1") && measure(counted) <= 160)
+
+        // Wide fits everything that is short enough.
+        s.menuBarWidth = .wide
+        s.showCountInMenuBar = false
+        let short = [TodoItem(id: "a", title: "Write report"), TodoItem(id: "b", title: "Buy milk")]
+        #expect(MenuBarTitle.make(items: short, settings: s, measure: measure) == "Write report | Buy milk")
+    }
+
+    @Test func fairSharesGiveShortItemsTheirWidth() {
+        #expect(MenuBarTitle.fairShares(widths: [10, 100, 20], budget: 90) == [10, 60, 20])
+        #expect(MenuBarTitle.fairShares(widths: [100, 100], budget: 90) == [45, 45])
+        #expect(MenuBarTitle.fairShares(widths: [10, 20], budget: 90) == [10, 20])
+    }
+
+    @Test func menuBarSaysThingsBarBeforeFirstRead() async {
+        let client = InMemoryThingsClient(items: [.today: [TodoItem(id: "a", title: "Write report")]])
+        let store = TodoStore(client: client, persistence: MemorySettings())
+        #expect(store.menuBarTitle == "ThingsBar")
+        await store.refresh()
+        #expect(store.menuBarTitle == "Write report")
+    }
 }

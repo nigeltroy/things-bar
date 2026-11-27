@@ -27,8 +27,11 @@ public final class TodoStore {
     public var visibleItems: [TodoItem] { settings.filter.apply(to: items) }
     public var topItem: TodoItem? { visibleItems.first }
     public var menuBarTitle: String {
-        MenuBarTitle.make(items: visibleItems, settings: settings)
+        if items.isEmpty && lastRefresh == nil { return "ThingsBar" } // not read yet: "All clear" would be a guess
+        return MenuBarTitle.make(items: visibleItems, settings: settings, measure: measureMenuBarText)
     }
+    /// Measures text in the menu bar font (set by the app) so titles fit by width.
+    @ObservationIgnored public var measureMenuBarText: ((String) -> Double)?
 
     @ObservationIgnored public let client: ThingsClient
     @ObservationIgnored private let persistence: SettingsPersisting

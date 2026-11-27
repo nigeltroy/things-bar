@@ -95,17 +95,15 @@ struct SettingsPage: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
             }
-            SettingsRow("Length of each") {
-                Menu("\(store.settings.menuBarTitleLength) characters") {
-                    ForEach([16, 24, 32, 48, 64], id: \.self) { n in
-                        Toggle("\(n) characters", isOn: Binding(get: { store.settings.menuBarTitleLength == n },
-                                                               set: { if $0 { store.settings.menuBarTitleLength = n } }))
-                    }
+            SettingsRow("Width") {
+                Picker("", selection: $store.settings.menuBarWidth) {
+                    ForEach(AppSettings.MenuBarWidth.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                .menuStyle(.button).buttonStyle(.plain)
-                .modifier(ValueChip())
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                .help("Titles are shortened to fit, so macOS never hides ThingsBar for lack of room")
             }
             SettingsToggle("Show how many remain", isOn: $store.settings.showCountInMenuBar)
+            SettingsToggle("Show icon", isOn: $store.settings.showMenuBarIcon)
             PreviewLine(text: store.menuBarTitle)
         }
     }
@@ -118,7 +116,7 @@ struct SettingsPage: View {
             SettingsToggle("Hide scheduled for later", isOn: $store.settings.filter.hideScheduledLater)
             SettingsRow("Contains") {
                 TextField("", text: $store.settings.filter.searchText, prompt: Text("Any text").foregroundStyle(Theme.textMuted))
-                    .textFieldStyle(.plain).font(.system(size: 12)).multilineTextAlignment(.trailing)
+                    .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12)).multilineTextAlignment(.trailing)
                     .frame(width: 130)
                     .modifier(ValueChip())
             }
@@ -180,7 +178,7 @@ struct SettingsPage: View {
         SettingsSection("Things auth token") {
             HStack(spacing: 6) {
                 SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textMuted))
-                    .textFieldStyle(.plain).font(.system(size: 12))
+                    .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12))
                     .padding(.horizontal, 8).frame(height: 24)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
                     .onSubmit(saveToken)

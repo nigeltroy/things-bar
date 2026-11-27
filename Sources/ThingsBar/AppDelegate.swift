@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
         store = SelfTest.isActive ? SelfTest.makeStore(tokenStore: tokenStore) : Self.makeLiveStore(tokenStore: tokenStore)
         store.hasAuthToken = tokenStore.token != nil
+        let menuBarFont = NSFont.menuBarFont(ofSize: 0)
+        store.measureMenuBarText = { text in
+            Double((text as NSString).size(withAttributes: [.font: menuBarFont]).width)
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -63,6 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         withObservationTracking {
             statusItem.button?.title = store.menuBarTitle
             statusItem.button?.setAccessibilityLabel("ThingsBar: \(store.menuBarTitle)")
+            // Icon: off by default, but a problem reaching Things always shows one.
+            let symbol: String? = store.errorMessage != nil ? "exclamationmark.circle"
+                : store.settings.showMenuBarIcon ? "checkmark.circle" : nil
+            let image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+            image?.isTemplate = true
+            statusItem.button?.image = image
+            statusItem.button?.imagePosition = image == nil ? .noImage : .imageLeading
             statusItem.button?.toolTip = store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }
@@ -94,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.observeAppearance() }
         }
         panel.setAppearance(appearance.nsAppearance)
+        // App-wide too: text fields' editors and menus follow the app's appearance, so
+        // without this, typed text was black on the dark panel when macOS is in light mode.
+        NSApp.appearance = appearance.nsAppearance
     }
 
     @objc func statusItemClicked(_ sender: Any?) {

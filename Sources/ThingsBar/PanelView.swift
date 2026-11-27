@@ -426,7 +426,7 @@ struct AddTodoField: View {
                 .foregroundStyle(focused ? Theme.textPrimary : Theme.textMuted)
                 .frame(width: 16)
             TextField("", text: $title, prompt: Text("New To-Do").foregroundStyle(Theme.textMuted))
-                .textFieldStyle(.plain)
+                .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textPrimary)
                 .focused($focused)
@@ -742,10 +742,10 @@ struct TodoEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.textMuted))
-                .textFieldStyle(.plain).font(.system(size: 13, weight: .medium))
+                .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary).focused($titleFocused)
             TextField("", text: $notes, prompt: Text("Notes").foregroundStyle(Theme.textMuted), axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1...6)
             HStack(spacing: 8) {
                 Toggle(isOn: $hasDeadline) { Text("Deadline") }
