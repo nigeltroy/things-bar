@@ -112,14 +112,23 @@ TAMPER=1 scripts/test-update.sh
 tests, builds a universal app, packages the DMG, mounts it and smoke-tests the app
 inside, then uploads the DMG as a workflow artifact.
 
-To publish a release, tag a commit and push the tag:
+**Every push to `main` releases itself.** Commits follow
+[Conventional Commits](https://www.conventionalcommits.org), one change per commit,
+and the commits since the last `v*` tag decide the next version
+(`scripts/next-version.sh`):
 
-```bash
-git tag v1.0.0 && git push origin v1.0.0
-```
+| Commit | Example | Release |
+|---|---|---|
+| `feat:` | `feat: show notes in the list` | minor, 0.7.0 → 0.8.0 |
+| `fix:`, `perf:`, `revert:` | `fix(panel): clip the glass to its corners` | patch, 0.7.0 → 0.7.1 |
+| `type!:` or a `BREAKING CHANGE:` footer | `feat!: drop macOS 14` | major, 0.7.0 → 1.0.0 |
+| `docs:`, `style:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:` | `docs: explain the appcast` | none |
 
-The tag sets the app version (`1.0.0`), and the workflow attaches
-`ThingsBar-1.0.0.dmg`, its SHA-256 checksum and `appcast.xml` to a new GitHub Release.
+When there is a bump, the run tags the commit (`v0.8.0`) and publishes a GitHub Release
+with `ThingsBar-0.8.0.dmg`, its SHA-256 checksum, `appcast.xml` and notes listing the
+features and fixes. Subjects that aren't Conventional Commits get a warning in the run
+and release nothing. The repository holds no version number: the app reads its version
+from the bundle, which `build-app.sh` sets from the latest tag (CI: from the new one).
 Installed copies read the appcast from
 `https://github.com/nigeltroy/things-bar/releases/latest/download/appcast.xml`
 (`SUFeedURL`). Sparkle installs an update only if its EdDSA signature matches

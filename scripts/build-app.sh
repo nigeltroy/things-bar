@@ -6,7 +6,8 @@
 #   scripts/build-app.sh debug           debug build
 #
 # Optional environment:
-#   VERSION=1.2.0   sets CFBundleShortVersionString (default: value in Info.plist)
+#   VERSION=1.2.0   sets CFBundleShortVersionString (default: the latest v* git tag; CI
+#                   sets the release's version, see scripts/next-version.sh)
 #   BUILD=42        sets CFBundleVersion (default: value in Info.plist); Sparkle compares it
 #   SIGN_IDENTITY="Developer ID Application: …"
 #                   signs for distribution (hardened runtime, timestamp) instead of ad-hoc
@@ -36,6 +37,10 @@ ditto "$BIN_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 PLIST="$APP/Contents/Info.plist"
+if [[ -z "${VERSION:-}" ]]; then
+  VERSION=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+  VERSION="${VERSION#v}"
+fi
 if [[ -n "${VERSION:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
 fi

@@ -1,7 +1,14 @@
 import Foundation
 
 public enum ThingsBarInfo {
-    public static let version = "0.7.0"
+    /// The running app's version (CFBundleShortVersionString). Release builds get it from
+    /// their git tag (see scripts/build-app.sh); outside the app (unit tests) it is 0.0.0.
+    public static let version: String = {
+        guard Bundle.main.bundleURL.pathExtension == "app",
+              let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, !v.isEmpty
+        else { return "0.0.0" }
+        return v
+    }()
 }
 
 /// An open to-do as read from Things.

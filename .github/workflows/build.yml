@@ -2,8 +2,13 @@ name: Build
 
 # Every push and pull request: run the unit tests and build a universal DMG
 # (downloadable from the run's "Artifacts" section).
-# Pushing a tag like v1.2.0 also publishes a GitHub Release with the DMG and a signed
-# Sparkle appcast.xml attached; installed copies update in place from that appcast.
+#
+# Every push to main is also a release candidate. scripts/next-version.sh reads the
+# Conventional Commits since the last v* tag: feat → minor, fix/perf/revert → patch,
+# "!" or "BREAKING CHANGE:" → major, anything else (docs, ci, chore, …) → no release.
+# When there is a bump, the run tags the commit (v1.2.0) and publishes a GitHub Release
+# with the DMG and a signed Sparkle appcast.xml; installed copies update from that.
+# Nothing in the repository holds the version: the tags do.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   SPARKLE_PRIVATE_KEY      EdDSA key that signs updates (scripts: generate_keys -x)
@@ -16,16 +21,17 @@ name: Build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# main runs one at a time, never cancelled: a queued run sees the tags the one before
+# it made, and covers every commit since (GitHub keeps only the newest queued run).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
@@ -33,11 +39,15 @@ jobs:
     timeout-minutes: 45
     outputs:
       notarized: ${{ steps.notarize.outputs.notarized || 'false' }}
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
     env:
       HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_P12 != '' && secrets.NOTARY_API_KEY != '' }}
       HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # every commit and tag, for the version
 
       - name: Toolchain
         run: |
@@ -50,14 +60,25 @@ jobs:
       - name: Version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            BASE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
-            VERSION="${BASE}-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+          mkdir -p build
+          ./scripts/next-version.sh build/notes.md > "$RUNNER_TEMP/next"
+          cat "$RUNNER_TEMP/next"
+          source "$RUNNER_TEMP/next"
+          RELEASE=false
+          if [[ "$GITHUB_REF" == refs/heads/main && "$bump" != none ]]; then
+            if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+              echo "::warning::v$version already exists; not releasing"
+            else
+              RELEASE=true
+            fi
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
+          if [[ "$RELEASE" != true ]]; then
+            version="${last}-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}" # a test build, never offered as an update
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Version: $version (release: $RELEASE, bump: $bump)" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat build/notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Import Developer ID certificate
         id: identity
@@ -120,9 +141,10 @@ jobs:
           (cd build && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
 
       - name: Sparkle appcast
-        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_SPARKLE_KEY == 'true'
+        if: steps.version.outputs.release == 'true' && env.HAS_SPARKLE_KEY == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          TAG: v${{ steps.version.outputs.version }}
         run: |
           DMG="${{ steps.dmg.outputs.path }}"
           FEED="$RUNNER_TEMP/feed"; mkdir -p "$FEED"
@@ -130,9 +152,9 @@ jobs:
           RELEASE="https://github.com/$GITHUB_REPOSITORY/releases"
           echo "$SPARKLE_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/generate_appcast \
             --ed-key-file - \
-            --download-url-prefix "$RELEASE/download/$GITHUB_REF_NAME/" \
-            --link "$RELEASE/tag/$GITHUB_REF_NAME" \
-            --full-release-notes-url "$RELEASE/tag/$GITHUB_REF_NAME" \
+            --download-url-prefix "$RELEASE/download/$TAG/" \
+            --link "$RELEASE/tag/$TAG" \
+            --full-release-notes-url "$RELEASE/tag/$TAG" \
             -o build/appcast.xml "$FEED"
           grep -q 'sparkle:edSignature' build/appcast.xml
           cat build/appcast.xml
@@ -164,10 +186,11 @@ jobs:
             build/ThingsBar-*.dmg
             build/ThingsBar-*.dmg.sha256
             build/appcast.xml
+            build/notes.md
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.build.outputs.release == 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -181,16 +204,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NOTARIZED: ${{ needs.build.outputs.notarized }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          test -s dist/appcast.xml # installed copies update from it
           INSTALL="Download **ThingsBar-$VERSION.dmg**, open it and drag ThingsBar to Applications. Already have 0.7 or later? Choose **Install $VERSION** in ThingsBar's Settings: it updates and reopens itself."
           if [[ "$NOTARIZED" == "true" ]]; then
             GATEKEEPER="Signed with Developer ID and notarized by Apple."
           else
             GATEKEEPER="Not notarized yet: on first launch, open System Settings → Privacy & Security and click **Open Anyway**."
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          { cat dist/notes.md; echo "$INSTALL $GATEKEEPER Requires macOS 14+ and Things 3."; } > notes.md
+          rm dist/notes.md
+          # Creates the tag on the commit that was built.
+          gh release create "v$VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
             --title "ThingsBar $VERSION" \
-            --generate-notes \
-            --notes "$INSTALL $GATEKEEPER Requires macOS 14+ and Things 3."
+            --notes-file notes.md
