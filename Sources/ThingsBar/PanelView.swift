@@ -38,6 +38,7 @@ struct PanelView: View {
     let store: TodoStore
     let state: PanelState
     let tokenStore: TokenStoring
+    var updates: UpdateChecker?
     var openThings: () -> Void = {}
     var sizeChanged: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -51,10 +52,10 @@ struct PanelView: View {
             } else {
             switch state.route {
             case .list:
-                ListPage(store: store, state: state, openThings: openThings)
+                ListPage(store: store, state: state, updates: updates, openThings: openThings)
                     .transition(pageTransition(edge: .leading))
             case .settings:
-                SettingsPage(store: store, state: state, tokenStore: tokenStore)
+                SettingsPage(store: store, state: state, tokenStore: tokenStore, updates: updates)
                     .transition(pageTransition(edge: .trailing))
             }
             }
@@ -110,6 +111,7 @@ private struct KeyboardShortcuts: View {
 struct ListPage: View {
     let store: TodoStore
     let state: PanelState
+    var updates: UpdateChecker?
     var openThings: () -> Void
 
     var body: some View {
@@ -147,7 +149,7 @@ struct ListPage: View {
 
     private var footer: some View {
         HStack(spacing: 2) {
-            FooterStatus(store: store, state: state)
+            FooterStatus(store: store, state: state, updates: updates)
             Spacer()
             IconButton(systemName: "arrow.up.forward.app", help: "Open Things", action: openThings)
         }
@@ -161,6 +163,7 @@ struct ListPage: View {
 struct FooterStatus: View {
     let store: TodoStore
     let state: PanelState
+    var updates: UpdateChecker?
     static let hintOpens = 5
 
     var body: some View {
@@ -180,6 +183,18 @@ struct FooterStatus: View {
                 label("Order saved in Things")
             } else if store.isLoading && store.lastRefresh == nil {
                 label("Reading Things…")
+            } else if let release = updates?.available {
+                // Quiet, and only when nothing more pressing is shown: details live in Settings.
+                Button { state.route = .settings } label: {
+                    HStack(spacing: 2) {
+                        Text("ThingsBar \(release.version) available")
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusEffectDisabled()
+                .help("Open Settings to download the update")
             } else if store.canReorder && store.visibleItems.count > 1 && state.opens <= Self.hintOpens {
                 label("Drag to reorder")
             } else if let last = store.lastRefresh {

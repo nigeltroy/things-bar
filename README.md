@@ -19,7 +19,11 @@ complete, edit, schedule, cancel and delete to-dos without opening Things.
   project, area or tag), filters, to-dos shown in the menu bar, title length,
   remaining count, appearance, open at login, and the Things auth token (stored in
   the Keychain).
-- **Quick menu** (right-click): complete or open the top to-do, refresh, settings.
+- **Quick menu** (right-click): complete or open the top to-do, refresh, settings,
+  check for updates.
+- **Updates:** Settings → General → Check for Updates asks GitHub for the latest
+  release; ThingsBar also checks on its own at most once a day (can be turned off).
+  When a newer version exists, the footer says so and Download opens its disk image.
 - **Keyboard:** ↑/↓ highlight a to-do, Space completes it, Return edits it, ⌘⌫
   trashes it, ⌘↑/⌘↓ and ⌥⌘↑/⌥⌘↓ move it, ⌘Z undoes, ⌘N new to-do, ⌘, settings,
   Esc back or close, ⌘Q quit.
@@ -64,6 +68,7 @@ Things access.
 ```bash
 swift test                                   # unit tests (no Things needed)
 THINGSBAR_INTEGRATION=1 THINGS_AUTH_TOKEN=… swift test --filter LiveThings
+THINGSBAR_NETWORK=1 swift test --filter LiveGitHub   # reads the latest GitHub release
 ```
 
 The integration tests drive the real Things. They create uniquely named to-dos

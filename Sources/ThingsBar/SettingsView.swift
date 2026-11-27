@@ -9,6 +9,7 @@ struct SettingsPage: View {
     @Bindable var store: TodoStore
     let state: PanelState
     let tokenStore: TokenStoring
+    var updates: UpdateChecker?
 
     @State private var tokenDraft = ""
     @State private var tokenMessage: String?
@@ -183,6 +184,7 @@ struct SettingsPage: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
             }
+            if let updates { UpdateRows(updates: updates, automatic: $store.settings.checkForUpdatesAutomatically) }
             SettingsToggle("Open at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, on in setLaunchAtLogin(on) }
             if let loginError { Note(text: loginError) }
@@ -351,5 +353,45 @@ struct SoftScrollEdges: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// "Check for Updates" with its result, and the automatic-check switch.
+struct UpdateRows: View {
+    let updates: UpdateChecker
+    @Binding var automatic: Bool
+
+    var body: some View {
+        SettingsRow("Check for Updates", onLabelTap: { Task { await updates.check() } }) {
+            switch updates.status {
+            case .checking:
+                ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 16, height: 16)
+            case .available(let release):
+                Button("Download \(release.version)") { UpdateActions.download(release) }
+                    .buttonStyle(SoftButtonStyle(prominent: true))
+                    .help("Opens the ThingsBar \(release.version) disk image in your browser")
+            case .upToDate:
+                Text("Up to date").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            case .failed:
+                Button("Try Again") { Task { await updates.check() } }.buttonStyle(SoftButtonStyle())
+            case .idle:
+                Button("Check Now") { Task { await updates.check() } }.buttonStyle(SoftButtonStyle())
+            }
+        }
+        .accessibilityAddTraits(.isButton)
+        if case .available(let release) = updates.status {
+            Note(text: "ThingsBar \(release.version) is available (you have \(updates.currentVersion)). Open the disk image, quit ThingsBar, then drag the new one to Applications.")
+        } else if case .failed(let message) = updates.status {
+            Note(text: "Couldn't check for updates. \(message)")
+        }
+        SettingsToggle("Check for updates automatically", isOn: $automatic)
+    }
+}
+
+@MainActor
+enum UpdateActions {
+    /// Opens the DMG (the browser downloads it), or the release page if there's none.
+    static func download(_ release: ReleaseInfo) {
+        NSWorkspace.shared.open(release.downloadURL ?? release.pageURL)
     }
 }

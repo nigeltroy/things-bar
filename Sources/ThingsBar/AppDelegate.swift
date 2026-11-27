@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var tokenStore: TokenStoring!
     private(set) var panelState = PanelState()
     private(set) var panel: PanelController!
+    private(set) var updates: UpdateChecker!
+    private var updateTimer: Timer?
     private var refreshTimer: Timer?
     private var changeTimer: Timer?
     private var keyMonitor: Any?
@@ -18,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = SelfTest.isActive ? SelfTest.makeStore(tokenStore: tokenStore) : Self.makeLiveStore(tokenStore: tokenStore)
         store.hasAuthToken = tokenStore.token != nil
         let menuBarFont = NSFont.menuBarFont(ofSize: 0)
+        updates = SelfTest.isActive ? SelfTest.makeUpdateChecker() : UpdateChecker()
         store.measureMenuBarText = { text in
             Double((text as NSString).size(withAttributes: [.font: menuBarFont]).width)
         }
@@ -59,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeRefreshInterval()
         observeAppearance()
         watchForChanges()
+        scheduleUpdateChecks()
         // Without a token ThingsBar does nothing but ask for one: Things isn't read at all.
         if store.hasAuthToken { Task { await store.refresh() } }
 
@@ -68,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func makePanelView() -> some View {
-        PanelView(store: store, state: panelState, tokenStore: tokenStore,
+        PanelView(store: store, state: panelState, tokenStore: tokenStore, updates: updates,
                   openThings: { [weak self] in self?.openThings() },
                   sizeChanged: { [weak self] in
                       // Defer to the next turn so SwiftUI has committed the new layout.
@@ -120,6 +124,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         changeTimer?.tolerance = 0.5
     }
 
+    /// At launch and every few hours, check GitHub if a day has passed since the last check.
+    private func scheduleUpdateChecks() {
+        guard !SelfTest.isActive else { return }
+        let tick = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.store.settings.checkForUpdatesAutomatically else { return }
+                await self.updates.checkIfDue()
+            }
+        }
+        tick()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { _ in tick() }
+        updateTimer?.tolerance = 600
+    }
+
     private func observeAppearance() {
         let appearance = withObservationTracking { store.settings.appearance } onChange: { [weak self] in
             Task { @MainActor in self?.observeAppearance() }
@@ -157,6 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Refresh", action: #selector(refreshNow), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        if let release = updates.available {
+            menu.addItem(withTitle: "Download ThingsBar \(release.version)…", action: #selector(downloadUpdate), keyEquivalent: "").target = self
+        } else {
+            menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit ThingsBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
@@ -172,6 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func completeTop() { if let top = store.topItem { Task { await store.complete(top) } } }
     @objc private func revealTop() { if let top = store.topItem { Task { await store.reveal(top) } } }
     @objc private func refreshNow() { Task { await store.refresh() } }
+
+    @objc private func downloadUpdate() { if let r = updates.available { UpdateActions.download(r) } }
+
+    /// Shows the result where the button lives: Settings, inside the panel.
+    @objc private func checkForUpdates() {
+        openSettings()
+        Task { await updates.check() }
+    }
 
     @objc private func openPanel() { if !panel.isShown { showPanel() } }
 

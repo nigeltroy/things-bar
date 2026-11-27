@@ -16,6 +16,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Append the number of remaining to-dos, e.g. "Write report  +4".
     public var showCountInMenuBar = false
     public var appearance: Appearance = .dark
+    /// Look for a newer ThingsBar on GitHub at most once a day.
+    public var checkForUpdatesAutomatically = true
 
     public enum MenuBarWidth: String, Codable, CaseIterable, Sendable {
         case narrow, medium, wide
@@ -42,6 +44,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         menuBarTitleLength = try c.decodeIfPresent(Int.self, forKey: .menuBarTitleLength) ?? d.menuBarTitleLength
         showCountInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .showCountInMenuBar) ?? d.showCountInMenuBar
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
+        checkForUpdatesAutomatically = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdatesAutomatically) ?? d.checkForUpdatesAutomatically
     }
 }
 

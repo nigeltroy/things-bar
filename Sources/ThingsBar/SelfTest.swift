@@ -48,6 +48,16 @@ enum SelfTest {
         return TodoStore(client: client, persistence: ephemeralSettings())
     }
 
+    /// No network in self-tests: a pretend newer release, so the update UI can be checked.
+    static func makeUpdateChecker() -> UpdateChecker {
+        struct Fixed: ReleaseFetching {
+            func latestRelease() async throws -> ReleaseInfo {
+                ReleaseInfo(version: "9.9.0", pageURL: URL(string: "https://github.com/nigeltroy/things-bar/releases")!)
+            }
+        }
+        return UpdateChecker(fetcher: Fixed(), defaults: UserDefaults(suiteName: "thingsbar.selftest.\(UUID())")!)
+    }
+
     /// Throwaway settings so a self-test never touches real preferences.
     static func ephemeralSettings() -> SettingsPersisting {
         UserDefaultsSettings(defaults: UserDefaults(suiteName: "thingsbar.selftest.\(UUID())")!)
@@ -72,6 +82,7 @@ enum SelfTest {
             } else if runActions {
                 steps = await liveActions(delegate)
             }
+            if !useLiveThings { renderUpdates(delegate, dir, "updates-available") }
             write(json: ["steps": steps], to: dir.appendingPathComponent("actions.json"))
             NSApp.terminate(nil)
         }
@@ -96,7 +107,7 @@ enum SelfTest {
         let store = d.store!
         func panel(_ route: PanelState.Route) -> some View {
             let state = PanelState(); state.route = route
-            return PanelView(store: store, state: state, tokenStore: d.tokenStore)
+            return PanelView(store: store, state: state, tokenStore: d.tokenStore, updates: d.updates)
         }
         snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel.png"))
         snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel-light.png"), dark: false)
@@ -130,6 +141,7 @@ enum SelfTest {
                 }
             }
         }
+        renderUpdates(d, dir, "updates-idle")
         // No token: the panel is only the token prompt.
         let gateStore = TodoStore(client: InMemoryThingsClient(), persistence: ephemeralSettings())
         for (name, dark) in [("gate.png", true), ("gate-light.png", false)] {
@@ -139,6 +151,22 @@ enum SelfTest {
         snapshot(GlassPreview {
             ErrorBanner(message: ThingsError.changeNotApplied.errorDescription!) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
         }, to: dir.appendingPathComponent("error.png"))
+    }
+
+    /// The Settings update rows and the list footer, in dark and light.
+    static func renderUpdates(_ d: AppDelegate, _ dir: URL, _ name: String) {
+        for dark in [true, false] {
+            snapshot(GlassPreview {
+                VStack(spacing: 0) {
+                    UpdateRows(updates: d.updates, automatic: .constant(true))
+                    Rectangle().fill(Theme.separator).frame(height: 1).padding(.horizontal, Theme.textInset)
+                    // A fresh store, so no undo toast or status outranks the update note.
+                    HStack { FooterStatus(store: TodoStore(client: InMemoryThingsClient(), persistence: ephemeralSettings()),
+                                          state: PanelState(), updates: d.updates); Spacer() }
+                        .padding(.horizontal, Theme.textInset).padding(.vertical, 6)
+                }.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+            }, to: dir.appendingPathComponent(name + (dark ? ".png" : "-light.png")), dark: dark)
+        }
     }
 
     /// Row height with and without hover, for every visible row: hovering must not resize rows.
@@ -186,6 +214,13 @@ enum SelfTest {
         })
         out.append(contentsOf: await panelSteps(d))
         out.append(await step("filter Home", d) { s.settings.filter.includeTags = ["Home"]; return true })
+        out.append(await step("update check finds a newer release", d) {
+            let before = d.makeQuickMenu().items.map(\.title)
+            await d.updates.check()
+            let after = d.makeQuickMenu().items.map(\.title)
+            return before.contains("Check for Updates…") && d.updates.available?.version == "9.9.0"
+                && after.contains("Download ThingsBar 9.9.0…")
+        })
         out.append(contentsOf: await tokenGateSteps(d))
         return out
     }
