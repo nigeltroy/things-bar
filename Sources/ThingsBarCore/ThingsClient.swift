@@ -13,6 +13,9 @@ public protocol ThingsClient: Sendable {
     func delete(id: String) async throws
     /// Opens the to-do in Things (brings Things to the front).
     func reveal(id: String) async throws
+    /// Moves a to-do to the top of Today. Things has no reorder API; rescheduling
+    /// This Evening → Today moves the to-do to the top (observed on Things 3.25).
+    func moveToTopOfToday(id: String) async throws
 }
 
 /// Opens `things:///` URLs and launches Things. The app implements this with NSWorkspace.
@@ -148,6 +151,13 @@ public final class LiveThingsClient: ThingsClient {
 
     public func reveal(id: String) async throws {
         try await opener.open(ThingsURL.show(id: id), activate: true)
+    }
+
+    public func moveToTopOfToday(id: String) async throws {
+        try await update(id: id, changes: TodoChanges(when: .evening))
+        try await update(id: id, changes: TodoChanges(when: .today))
+        // Confirm the side effect we rely on actually happened.
+        try await waitUntil { try await self.todos(in: .today).first?.id == id }
     }
 
     // MARK: - Verifying URL-scheme writes

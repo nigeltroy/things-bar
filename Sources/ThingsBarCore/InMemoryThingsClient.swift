@@ -51,6 +51,15 @@ public actor InMemoryThingsClient: ThingsClient {
     public func delete(id: String) async throws { try check(); remove(id); log.append("delete \(id)") }
     public func reveal(id: String) async throws { try check(); log.append("reveal \(id)") }
 
+    public func moveToTopOfToday(id: String) async throws {
+        try check()
+        let key = ThingsSource.today.id
+        if let i = items[key]?.firstIndex(where: { $0.id == id }) {
+            items[key]!.insert(items[key]!.remove(at: i), at: 0)
+        }
+        log.append("top \(id)")
+    }
+
     private func mutate(_ id: String, _ body: (inout TodoItem) -> Void) {
         for key in items.keys {
             if let i = items[key]!.firstIndex(where: { $0.id == id }) { body(&items[key]![i]) }

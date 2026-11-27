@@ -284,6 +284,9 @@ struct TodoActions: View {
     var body: some View {
         if let edit { Button("Edit…", action: edit) }
         Button("Open in Things") { Task { await store.reveal(item) } }
+        if store.canMoveToTop && store.items.first?.id != item.id {
+            Button("Move to Top") { Task { await store.moveToTop(item) } }
+        }
         Menu("When") {
             ForEach(WhenOption.allCases, id: \.self) { when in
                 Button(when.label) { Task { await store.update(item, changes: TodoChanges(when: when)) } }

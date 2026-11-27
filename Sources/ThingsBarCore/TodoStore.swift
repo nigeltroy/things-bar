@@ -108,6 +108,20 @@ public final class TodoStore {
         return ok
     }
 
+    /// Only Today supports reordering (see ThingsClient.moveToTopOfToday).
+    public var canMoveToTop: Bool { settings.source == .today && hasAuthToken }
+
+    public func moveToTop(_ item: TodoItem) async {
+        guard canMoveToTop, let index = items.firstIndex(where: { $0.id == item.id }), index > 0 else { return }
+        let previous = items
+        pendingIDs.insert(item.id)
+        items.insert(items.remove(at: index), at: 0) // optimistic
+        let ok = await perform { try await self.client.moveToTopOfToday(id: item.id) }
+        pendingIDs.remove(item.id)
+        if !ok { items = previous }
+        await refresh()
+    }
+
     public func reveal(_ item: TodoItem) async {
         await perform { try await self.client.reveal(id: item.id) }
     }

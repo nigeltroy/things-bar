@@ -108,4 +108,16 @@ struct LiveThingsIntegrationTests {
         let item = try #require(try await find(title))
         try await client.delete(id: item.id)
     }
+
+    @Test func moveToTopOfToday() async throws {
+        let a = "\(tag) order A", b = "\(tag) order B"
+        try await client.add(TodoDraft(title: a), to: .today)
+        try await client.add(TodoDraft(title: b), to: .today) // B is now above A
+        let itemA = try #require(try await find(a))
+        #expect(try await client.todos(in: .today).first?.title == b)
+        try await client.moveToTopOfToday(id: itemA.id)
+        let titles = try await client.todos(in: .today).map(\.title)
+        #expect(titles.prefix(2) == [a, b])
+        for title in [a, b] { if let item = try await find(title) { try await client.delete(id: item.id) } }
+    }
 }
