@@ -55,4 +55,12 @@ public enum ThingsURL {
     }
 
     public static func show(id: String) -> URL { make("show", [("id", id)]) }
+
+    /// A token check that can't change anything: `update` of a to-do ID that doesn't
+    /// exist, replying to `thingsbar://token-check` with `x-success` or `x-error`.
+    public static func tokenCheck(authToken: String, requestID: String) -> URL {
+        let reply = "thingsbar://token-check?request=\(requestID)"
+        return make("update", [("auth-token", authToken), ("id", "thingsbar-token-check-\(requestID)"),
+                               ("x-success", reply + "&result=success"), ("x-error", reply + "&result=error")])
+    }
 }

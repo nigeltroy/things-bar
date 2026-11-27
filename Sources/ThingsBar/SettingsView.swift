@@ -13,6 +13,9 @@ struct SettingsPage: View {
 
     @State private var tokenDraft = ""
     @State private var tokenMessage: String?
+    @State private var tokenError = false
+    @State private var checkingToken = false
+    @State private var confirmingRemove = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
     @State private var filtersExpanded = false
@@ -40,6 +43,12 @@ struct SettingsPage: View {
         }
         .task { await store.refresh() }
         .onAppear { tokenDraft = tokenStore.token ?? "" }
+        .confirmationDialog("Remove the auth token?", isPresented: $confirmingRemove) {
+            Button("Remove Token", role: .destructive, action: removeToken)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("ThingsBar stops working until you enter a token again. Things itself isn't affected.")
+        }
     }
 
     private var header: some View {
@@ -74,6 +83,7 @@ struct SettingsPage: View {
                 }
                 .menuStyle(.button).buttonStyle(.plain)
                 .modifier(ValueChip())
+                .grayFocusRing(cornerRadius: 11)
             }
             filterRows
         }
@@ -96,13 +106,13 @@ struct SettingsPage: View {
                 Picker("", selection: $store.settings.menuBarItemCount) {
                     Text("1").tag(1); Text("2").tag(2); Text("3").tag(3)
                 }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize().grayFocusRing()
             }
             SettingsRow("Width") {
                 Picker("", selection: $store.settings.menuBarWidth) {
                     ForEach(AppSettings.MenuBarWidth.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize().grayFocusRing()
                 .help("Titles are shortened to fit, so macOS never hides ThingsBar for lack of room")
             }
             SettingsToggle("Show how many remain", isOn: $store.settings.showCountInMenuBar)
@@ -174,6 +184,7 @@ struct SettingsPage: View {
         }
         .menuStyle(.button).buttonStyle(.plain)
         .modifier(ValueChip())
+        .grayFocusRing(cornerRadius: 11)
     }
 
     private var generalSection: some View {
@@ -182,7 +193,7 @@ struct SettingsPage: View {
                 Picker("", selection: $store.settings.appearance) {
                     ForEach(AppSettings.Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize().grayFocusRing()
             }
             if let updates { UpdateRows(updates: updates, automatic: $store.settings.checkForUpdatesAutomatically) }
             SettingsToggle("Open at login", isOn: $launchAtLogin)
@@ -207,8 +218,14 @@ struct SettingsPage: View {
 
     private var thingsSection: some View {
         SettingsSection("Things access") {
-            TokenField(draft: $tokenDraft, savedToken: tokenStore.token, save: saveToken)
-            Note(text: tokenMessage ?? "Saved in your Keychain. ThingsBar needs it to work; removing it signs ThingsBar out of Things.")
+            TokenField(draft: $tokenDraft, savedToken: tokenStore.token, checking: checkingToken, save: saveToken)
+            Note(text: tokenMessage ?? "Saved in your Keychain. To use a new token, paste it and Save; ThingsBar checks it with Things first.",
+                 emphasized: tokenError)
+            HStack {
+                Spacer()
+                Button("Remove Token…") { confirmingRemove = true }.buttonStyle(SoftButtonStyle())
+            }
+            .padding(.horizontal, Theme.textInset).padding(.vertical, 2)
         }
     }
 
@@ -228,14 +245,21 @@ struct SettingsPage: View {
     }
 
     private func saveToken() {
-        do {
-            try tokenStore.setToken(tokenDraft)
-            tokenMessage = tokenStore.token == nil ? nil : "Token saved to your Keychain."
-            if tokenStore.token == nil { state.route = .list } // back to the token prompt
-            store.hasAuthToken = tokenStore.token != nil
-        } catch {
-            tokenMessage = "Couldn't save: \(error.localizedDescription)"
+        checkingToken = true
+        Task {
+            let error = await TokenGate.submit(tokenDraft, store: store, tokenStore: tokenStore, state: state)
+            state.route = .settings // submit opens the list; stay here
+            tokenError = error != nil
+            tokenMessage = error ?? "Token checked with Things and saved to your Keychain."
+            checkingToken = false
         }
+    }
+
+    private func removeToken() {
+        try? tokenStore.setToken(nil)
+        tokenDraft = ""
+        state.route = .list
+        store.hasAuthToken = false // back to the token prompt
     }
 }
 
@@ -290,9 +314,7 @@ struct SettingsToggle: View {
 
     var body: some View {
         SettingsRow(label, onLabelTap: { isOn.toggle() }) {
-            Toggle(label, isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
-                .tint(Theme.textSecondary)
-                .focusEffectDisabled()
+            Toggle(label, isOn: $isOn).labelsHidden().toggleStyle(GraySwitchStyle())
         }
     }
 }
@@ -313,9 +335,11 @@ struct ValueChip: ViewModifier {
 
 struct Note: View {
     let text: String
+    /// Errors and warnings read in secondary, not muted, text.
+    var emphasized = false
     var body: some View {
         Text(text)
-            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            .font(.system(size: 11)).foregroundStyle(emphasized ? Theme.textPrimary : Theme.textMuted)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Theme.textInset).padding(.vertical, 3)
@@ -338,9 +362,11 @@ struct PreviewLine: View {
 
 struct HoverFillButtonStyle: ButtonStyle {
     @State private var hovering = false
+    @Environment(\.isFocused) private var isFocused
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(RoundedRectangle(cornerRadius: 6).fill(configuration.isPressed ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
+            .overlay { if isFocused { RoundedRectangle(cornerRadius: 6).inset(by: -1).strokeBorder(Theme.focusRing, lineWidth: 1.5) } }
             .onHover { hovering = $0 }
     }
 }

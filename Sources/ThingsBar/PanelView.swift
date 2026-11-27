@@ -16,6 +16,10 @@ final class PanelState {
     var opens = 0
     /// Briefly set after a drop so the moved row flashes.
     var justMovedID: String?
+    /// Shown on the token prompt when Things stopped accepting the saved token.
+    var gateMessage: String?
+    /// Asks Things whether a token is valid (set by the app; self-tests use a fixture).
+    @ObservationIgnored var verifyToken: @MainActor (String) async -> TokenCheck = { _ in .valid }
 
     func flash(_ id: String) {
         justMovedID = id
@@ -93,7 +97,7 @@ private struct KeyboardShortcuts: View {
             Button("") { move { _, _ in 0 } }.keyboardShortcut(.upArrow, modifiers: [.command, .option])
             Button("") { move { _, n in n - 1 } }.keyboardShortcut(.downArrow, modifiers: [.command, .option])
         }
-        .buttonStyle(.plain).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+        .buttonStyle(.plain).focusable(false).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
     }
 
     private func move(_ target: (Int, Int) -> Int) {
@@ -193,7 +197,7 @@ struct FooterStatus: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).focusEffectDisabled()
+                .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 4)))
                 .help("Open Settings to download the update")
             } else if store.canReorder && store.visibleItems.count > 1 && state.opens <= Self.hintOpens {
                 label("Drag to reorder")
@@ -471,7 +475,7 @@ struct AddTodoField: View {
             }
             Button("") { focused = true }
                 .keyboardShortcut("n", modifiers: .command)
-                .buttonStyle(.plain).frame(width: 0, height: 0).opacity(0)
+                .buttonStyle(.plain).focusable(false).frame(width: 0, height: 0).opacity(0)
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, Theme.textInset).frame(height: 30)
@@ -621,7 +625,7 @@ struct Checkbox: View {
             .frame(width: 16, height: 16)
             .contentShape(Circle().inset(by: -4))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FocusRingButtonStyle(shape: Circle()))
         .onHover { hovering = $0 }
         .help("Complete")
         .accessibilityLabel("Complete")
@@ -705,7 +709,7 @@ struct MoreMenu: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).grayFocusRing()
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovering = $0 }
@@ -796,7 +800,7 @@ struct TodoEditor: View {
                 Button(action: save) {
                     HStack(spacing: 5) {
                         Text(saving ? "Saving…" : "Save")
-                        Text("⌘↩").opacity(0.6)
+                        Text("↩").opacity(0.6) // Return saves from the title; ⌘↩ from anywhere
                     }
                 }
                 .buttonStyle(SoftButtonStyle(prominent: true))
@@ -828,7 +832,7 @@ struct TodoEditor: View {
             .background(Capsule().fill(Theme.strongFill))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FocusRingButtonStyle(shape: Capsule()))
         .popover(isPresented: $pickingDate, arrowEdge: .bottom) {
             GrayCalendar(selection: $deadline) { pickingDate = false }
                 .padding(12)
@@ -873,7 +877,7 @@ struct TagPicker: View {
             .background(Capsule().fill(Theme.strongFill))
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).grayFocusRing(cornerRadius: 11)
         .menuIndicator(.hidden)
         .fixedSize()
     }
@@ -1018,7 +1022,7 @@ private struct DayCell: View {
                 .overlay(Circle().strokeBorder(isToday && !selected ? Theme.textSecondary : .clear, lineWidth: 1))
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FocusRingButtonStyle(shape: Circle()))
         .onHover { hovering = $0 }
         .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
         .accessibilityAddTraits(selected ? .isSelected : [])

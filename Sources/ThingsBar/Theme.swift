@@ -10,7 +10,9 @@ import ThingsBarCore
 enum Theme {
     // Each token has a normal and an Increase Contrast value (System Settings →
     // Accessibility → Display), resolved per appearance by AppKit.
-    static let textPrimary = Color.primary
+    /// Titles and typed text. Brighter than the system label color (85%) so the three
+    /// text tiers stay distinct once secondary and muted are raised for contrast.
+    static let textPrimary = ink(0.96, 0.90, contrast: 1, 1)
     // Values are set by the self-test's contrast audit (ContrastAudit.swift): every text
     // token reaches WCAG's 4.5:1 for small text, and glyph tokens 3:1, in dark and light,
     // on the panel and on field fills, over worst-case glass.
@@ -39,6 +41,9 @@ enum Theme {
     static let strongFill = ink(0.10, 0.10, contrast: 0.14, 0.18)
     /// Drawn around the panel only with Increase Contrast, as system panels do.
     static let panelBorder = ink(0, 0, contrast: 0.45, 0.40)
+
+    /// Keyboard focus: a gray ring instead of the system's blue one.
+    static let focusRing = ink(0.70, 0.62, contrast: 0.90, 0.85)
 
     // Geometry (points). Rows are inset from the panel edge so hover fills sit
     // concentrically inside the panel's 16 pt corners.
@@ -99,8 +104,7 @@ struct IconButton: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.hoverFill : .clear))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .focusEffectDisabled() // no blue focus ring: the panel is grayscale
+        .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 6)))
         .help(help)
         .accessibilityLabel(help)
         .onHover { h in withAnimation(Theme.hoverAnimation) { hovering = h } }
@@ -108,22 +112,63 @@ struct IconButton: View {
 }
 
 /// Low-contrast text button. `prominent` inverts to a solid label-colored capsule.
+/// Disabled buttons have no fill, only a dashed outline, so they never pass for the
+/// enabled filled buttons beside them; their text stays legible (4.5:1).
 struct SoftButtonStyle: ButtonStyle {
     var prominent = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var isFocused
 
     func makeBody(configuration: Configuration) -> some View {
-        // Disabled: a plain chip with secondary (still 4.5:1) text, not a faded button that's hard to read.
-        let solid = prominent && isEnabled
         configuration.label
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(solid ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
-                             : AnyShapeStyle(isEnabled ? Theme.textPrimary : Theme.textSecondary))
+            .foregroundStyle(!isEnabled ? AnyShapeStyle(Theme.textMuted)
+                             : prominent ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(Theme.textPrimary))
             .padding(.horizontal, 11).padding(.vertical, 5)
-            .background(Capsule().fill(solid ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.strongFill)))
+            .background {
+                if !isEnabled {
+                    Capsule().strokeBorder(Theme.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                } else {
+                    Capsule().fill(prominent ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.strongFill))
+                }
+            }
+            .overlay { if isFocused && isEnabled { Capsule().inset(by: -2.5).strokeBorder(Theme.focusRing, lineWidth: 1.5) } }
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())
     }
+}
+
+/// A plain button that draws a gray focus ring (keyboard navigation) in `shape`.
+struct FocusRingButtonStyle<S: InsettableShape>: ButtonStyle {
+    let shape: S
+    @Environment(\.isFocused) private var isFocused
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .overlay { if isFocused { shape.inset(by: -1).strokeBorder(Theme.focusRing, lineWidth: 1.5) } }
+    }
+}
+
+/// Gray focus ring for controls drawn by the system (switches, segmented pickers,
+/// menus), which would otherwise get the blue accent ring.
+struct GrayFocusRing: ViewModifier {
+    var cornerRadius: CGFloat = 6
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content
+            .focusEffectDisabled()
+            .focused($focused)
+            .overlay {
+                if focused {
+                    RoundedRectangle(cornerRadius: cornerRadius).inset(by: -3).strokeBorder(Theme.focusRing, lineWidth: 1.5)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+extension View {
+    func grayFocusRing(cornerRadius: CGFloat = 6) -> some View { modifier(GrayFocusRing(cornerRadius: cornerRadius)) }
 }
 
 /// Small uppercase-free section header, as in Control Center.
@@ -159,5 +204,29 @@ struct PlaceholderOverlay: ViewModifier {
 extension View {
     func placeholder(_ text: String, when isEmpty: Bool, alignment: Alignment = .leading) -> some View {
         modifier(PlaceholderOverlay(text: text, isEmpty: isEmpty, alignment: alignment))
+    }
+}
+
+/// A grayscale switch. The system switch ignores tints in this panel, which left "on"
+/// and "off" two similar grays. Here on is a solid primary track with a dark knob;
+/// off is an outlined (3:1) track with a gray knob, so state never relies on position alone.
+struct GraySwitchStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        Button { withAnimation(Theme.motion(.snappy(duration: 0.15))) { configuration.isOn.toggle() } } label: {
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(configuration.isOn ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.fieldFill))
+                    .overlay(Capsule().strokeBorder(configuration.isOn ? .clear : Theme.textTertiary, lineWidth: 1))
+                Circle()
+                    .fill(configuration.isOn ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(Theme.textSecondary))
+                    .padding(configuration.isOn ? 2 : 3)
+            }
+            .frame(width: 28, height: 16)
+            .contentShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.5)
+        }
+        .buttonStyle(FocusRingButtonStyle(shape: Capsule()))
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
     }
 }

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var panel: PanelController!
     private(set) var updates: UpdateChecker!
     private var updateTimer: Timer?
+    private var tokenVerifier: TokenVerifier?
     private var refreshTimer: Timer?
     private var changeTimer: Timer?
     private var keyMonitor: Any?
@@ -21,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.hasAuthToken = tokenStore.token != nil
         let menuBarFont = NSFont.menuBarFont(ofSize: 0)
         updates = SelfTest.isActive ? SelfTest.makeUpdateChecker() : UpdateChecker()
+        if SelfTest.isActive && !SelfTest.useLiveThings {
+            panelState.verifyToken = { $0 == "fixture-token" ? .valid : .invalid(TokenCheck.rejected) }
+        } else {
+            let verifier = TokenVerifier()
+            tokenVerifier = verifier
+            panelState.verifyToken = { await verifier.verify($0) }
+        }
         store.measureMenuBarText = { text in
             Double((text as NSString).size(withAttributes: [.font: menuBarFont]).width)
         }
@@ -59,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         observeTitle()
+        observeUnappliedWrites()
         observeRefreshInterval()
         observeAppearance()
         watchForChanges()
@@ -89,12 +98,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeTitle() {
         withObservationTracking {
             let title = store.hasAuthToken ? store.menuBarTitle : "ThingsBar"
-            statusItem.button?.title = title
-            statusItem.button?.setAccessibilityLabel("ThingsBar: \(title)")
+            // Things unreachable: the (possibly stale) titles are dimmed, not decorated with an icon.
+            let dimmed = store.hasAuthToken && store.thingsUnreachable
+            if dimmed {
+                statusItem.button?.attributedTitle = NSAttributedString(string: title, attributes: [
+                    .font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.tertiaryLabelColor])
+            } else {
+                statusItem.button?.title = title // plain: keeps the menu bar's own text treatment
+            }
+            statusItem.button?.setAccessibilityLabel(dimmed ? "ThingsBar: Things can't be reached. \(title)" : "ThingsBar: \(title)")
             statusItem.button?.toolTip = !store.hasAuthToken ? TokenGate.prompt
                 : store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }
+        }
+    }
+
+    /// A URL-scheme write Things didn't apply usually means a token it no longer
+    /// accepts: check the token, and if Things rejects it, go back to the token prompt.
+    private func observeUnappliedWrites() {
+        _ = withObservationTracking { store.unappliedWrites } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.observeUnappliedWrites()
+                guard let token = self.tokenStore.token, case .invalid = await self.panelState.verifyToken(token) else { return }
+                try? self.tokenStore.setToken(nil)
+                self.panelState.gateMessage = TokenGate.revoked
+                self.panelState.route = .list
+                self.store.dismissError()
+                self.store.hasAuthToken = false
+            }
         }
     }
 

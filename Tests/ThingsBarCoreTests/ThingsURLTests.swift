@@ -49,3 +49,19 @@ struct ThingsURLTests {
         #expect(p["when"] == "evening")
     }
 }
+
+struct TokenCheckTests {
+    @Test func tokenCheckURLTargetsANonexistentToDo() {
+        let url = ThingsURL.tokenCheck(authToken: "T&1", requestID: "R1").absoluteString
+        #expect(url.hasPrefix("things:///update?auth-token=T%261&id=thingsbar-token-check-R1"))
+        #expect(url.contains("x-success=thingsbar%3A%2F%2Ftoken-check%3Frequest%3DR1%26result%3Dsuccess"))
+        #expect(url.contains("x-error="))
+    }
+
+    @Test func interpretsThingsReplies() {
+        #expect(TokenCheck.interpret(result: "error", errorCode: "-12", errorMessage: "Cannot update to-do…") == .valid)
+        #expect(TokenCheck.interpret(result: "success", errorCode: nil, errorMessage: nil) == .valid)
+        #expect(TokenCheck.interpret(result: nil, errorCode: nil, errorMessage: nil) == .invalid(TokenCheck.rejected))
+        #expect(TokenCheck.interpret(result: "error", errorCode: "-5", errorMessage: "Nope") == .invalid("Things: Nope"))
+    }
+}

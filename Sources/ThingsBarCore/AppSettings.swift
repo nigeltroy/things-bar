@@ -15,7 +15,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var menuBarTitleLength: Int = 32
     /// Append the number of remaining to-dos, e.g. "Write report  +4".
     public var showCountInMenuBar = false
-    public var appearance: Appearance = .dark
+    public var appearance: Appearance = .system
     /// Look for a newer ThingsBar on GitHub at most once a day.
     public var checkForUpdatesAutomatically = true
 

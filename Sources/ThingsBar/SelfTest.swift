@@ -66,6 +66,14 @@ enum SelfTest {
     static func run(delegate: AppDelegate, outputDirectory dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         Task {
+            if args.contains("--selftest-token-check") { // live: checks THINGS_AUTH_TOKEN and a wrong token
+                let v = TokenVerifier()
+                let real = await v.verify(ProcessInfo.processInfo.environment["THINGS_AUTH_TOKEN"] ?? "")
+                let wrong = await v.verify("not-a-real-token-123")
+                write(json: ["real": "\(real)", "wrong": "\(wrong)"], to: dir.appendingPathComponent("token-check.json"))
+                NSApp.terminate(nil)
+                return
+            }
             try? await Task.sleep(for: .seconds(1.5)) // let the status item settle and the first refresh land
             await store(delegate).refresh()
             var report = statusReport(delegate)
@@ -243,12 +251,25 @@ enum SelfTest {
             return d.statusItem.button?.title == "ThingsBar" && d.statusItem.button?.image == nil
                 && menu == ["Enter Things Auth Token…", "---", "Quit ThingsBar"] && !keys && panelHeight < 200
         })
-        out.append(await step("token saved: the list is back", d) {
-            try? d.tokenStore.setToken("fixture-token")
-            s.hasAuthToken = true
+        out.append(await step("wrong token is rejected and not saved", d) {
+            let error = await TokenGate.submit("wrong-token", store: s, tokenStore: d.tokenStore, state: d.panelState)
+            return error == TokenCheck.rejected && d.tokenStore.token == nil && !s.hasAuthToken
+        })
+        out.append(await step("token checked and saved: the list is back", d) {
+            let error = await TokenGate.submit(" fixture-token ", store: s, tokenStore: d.tokenStore, state: d.panelState)
             await s.refresh()
             try? await Task.sleep(for: .milliseconds(50))
-            return d.statusItem.button?.title != "ThingsBar" && !s.visibleItems.isEmpty
+            return error == nil && d.tokenStore.token == "fixture-token" && d.statusItem.button?.title != "ThingsBar" && !s.visibleItems.isEmpty
+        })
+        out.append(await step("token Things stops accepting sends you back to the prompt", d) {
+            d.panelState.verifyToken = { _ in .invalid(TokenCheck.rejected) } // Things rejects it from now on
+            await (s.client as? InMemoryThingsClient)?.setFailNextCall(.changeNotApplied) // the next write isn't applied
+            _ = await s.add(TodoDraft(title: "Needs the token"))
+            try? await Task.sleep(for: .milliseconds(200))
+            let ok = !s.hasAuthToken && d.tokenStore.token == nil && d.panelState.gateMessage == TokenGate.revoked
+            d.panelState.verifyToken = { $0 == "fixture-token" ? .valid : .invalid(TokenCheck.rejected) }
+            _ = await TokenGate.submit("fixture-token", store: s, tokenStore: d.tokenStore, state: d.panelState)
+            return ok && s.hasAuthToken
         })
         return out
     }
@@ -369,15 +390,18 @@ enum SelfTest {
 
     /// Renders a SwiftUI view in an offscreen, layer-backed window to PNG, over an
     /// opaque backdrop so transparent areas are visible.
+    /// Key-capable, so system controls (switches) render in their active colors.
+    private final class KeyWindow: NSWindow { override var canBecomeKey: Bool { true } }
+
     static func snapshot<V: View>(_ view: V, to url: URL, dark: Bool = true) {
         let host = NSHostingView(rootView: view)
         host.wantsLayer = true
         let size = host.fittingSize
-        let window = NSWindow(contentRect: NSRect(origin: CGPoint(x: -10_000, y: -10_000), size: size),
+        let window = KeyWindow(contentRect: NSRect(origin: CGPoint(x: -10_000, y: -10_000), size: size),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentView = host
-        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
         host.layoutSubtreeIfNeeded()
         host.display()
         defer { window.orderOut(nil) }

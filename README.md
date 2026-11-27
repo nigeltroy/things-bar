@@ -60,8 +60,11 @@ change this later in System Settings → Privacy & Security → Automation.
 
 **Auth token:** ThingsBar needs Things' URL-scheme token before it does anything. In
 Things, open Settings → General → Enable Things URLs → Manage, copy the token, and
-paste it into the panel when ThingsBar asks. Change or remove it later in Settings →
-Things access.
+paste it into the panel when ThingsBar asks. ThingsBar checks the token with Things
+before saving it, by asking Things to update a to-do ID that doesn't exist (so nothing
+can change) and reading Things' reply on its `thingsbar://` callback URL. If Things
+later stops accepting the token, ThingsBar asks for it again. Change or remove it in
+Settings → Things access.
 
 ## Tests
 

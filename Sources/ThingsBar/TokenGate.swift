@@ -4,6 +4,26 @@ import ThingsBarCore
 enum TokenGate {
     static let prompt = "Enter Things auth token to use ThingsBar"
     static let whereToFind = "In Things: Settings → General → Enable Things URLs → Manage. Copy the auth token and paste it here."
+    static let revoked = "Things no longer accepts the saved token. Paste the current one from Things → Settings → General → Enable Things URLs → Manage."
+
+    /// Checks `draft` with Things and, if Things accepts it, saves it and opens the list.
+    /// Returns an error to show, or nil on success. Nothing is saved for a rejected token.
+    @MainActor
+    static func submit(_ draft: String, store: TodoStore, tokenStore: TokenStoring, state: PanelState) async -> String? {
+        let token = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+        if case .invalid(let message) = await state.verifyToken(token) { return message }
+        do {
+            try tokenStore.setToken(token)
+        } catch {
+            return "Couldn't save the token: \(error.localizedDescription)"
+        }
+        state.gateMessage = nil
+        state.route = .list
+        store.hasAuthToken = true
+        Task { await store.refresh() }
+        return nil
+    }
 }
 
 /// The whole panel while no auth token is saved: ThingsBar needs the token to work at
@@ -11,67 +31,90 @@ enum TokenGate {
 struct TokenGatePage: View {
     let store: TodoStore
     let tokenStore: TokenStoring
-    var state: PanelState?
+    let state: PanelState
     @State private var draft = ""
     @State private var error: String?
+    @State private var checking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("ThingsBar")
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 12).padding(.bottom, 8)
             Text(TokenGate.prompt)
-                .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.bottom, 8)
-            TokenField(draft: $draft, savedToken: nil, autofocus: true, save: save)
+                .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 12).padding(.bottom, 8)
+                .accessibilityAddTraits(.isHeader)
+            TokenField(draft: $draft, savedToken: nil, autofocus: true, checking: checking, save: save)
                 .padding(.horizontal, Theme.edgeInset)
-            Note(text: error ?? TokenGate.whereToFind)
-                .padding(.horizontal, Theme.edgeInset).padding(.top, 4).padding(.bottom, 10)
+            Note(text: error ?? state.gateMessage ?? TokenGate.whereToFind, emphasized: error != nil || state.gateMessage != nil)
+                .padding(.horizontal, Theme.edgeInset).padding(.top, 4)
+            HStack {
+                Spacer()
+                Button("Quit ThingsBar") { NSApplication.shared.terminate(nil) }
+                    .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 4)))
+                    .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            }
+            .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 2).padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+        .onChange(of: draft) { _, _ in error = nil }
     }
 
     private func save() {
-        do {
-            try tokenStore.setToken(draft)
-            guard tokenStore.token != nil else { return }
-            error = nil
-            state?.route = .list
-            store.hasAuthToken = true
-            Task { await store.refresh() }
-        } catch {
-            self.error = "Couldn't save the token: \(error.localizedDescription)"
+        checking = true
+        Task {
+            error = await TokenGate.submit(draft, store: store, tokenStore: tokenStore, state: state)
+            checking = false
         }
     }
 }
 
-/// Secure token entry with a Save button, used by the gate and by Settings.
+/// Secure token entry with a Save button, used by the gate and by Settings. Save
+/// checks the token with Things first ("Checking…").
 struct TokenField: View {
     @Binding var draft: String
     /// The token already saved, if any: Save is enabled only for a different value.
     let savedToken: String?
     var autofocus = false
+    var checking = false
     let save: () -> Void
     @FocusState private var focused: Bool
+    @State private var revealed = false
 
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
-    /// The gate can't save an empty token; Settings can (that removes it).
-    private var canSave: Bool { trimmed != (savedToken ?? "") && (savedToken != nil || !trimmed.isEmpty) }
+    private var canSave: Bool { !checking && !trimmed.isEmpty && trimmed != (savedToken ?? "") }
 
     var body: some View {
         HStack(spacing: 6) {
-            SecureField("Things auth token", text: $draft, prompt: Text("")).placeholder("Paste auth token", when: draft.isEmpty)
+            HStack(spacing: 4) {
+                Group {
+                    if revealed {
+                        TextField("Things auth token", text: $draft, prompt: Text("")).placeholder("Paste auth token", when: draft.isEmpty)
+                            .font(.system(size: 12, design: .monospaced))
+                    } else {
+                        SecureField("Things auth token", text: $draft, prompt: Text("")).placeholder("Paste auth token", when: draft.isEmpty)
+                            .font(.system(size: 12))
+                    }
+                }
                 .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */
-                .font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(Theme.textPrimary)
                 .focused($focused)
-                .padding(.horizontal, 8).frame(height: 26)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(focused ? Theme.fieldBorderFocused : Theme.fieldBorder))
                 .onSubmit { if canSave { save() } }
                 .accessibilityLabel("Things auth token")
-            Button("Save") { save() }
+                // Lets people check a paste (a missing or extra character is the usual mistake).
+                Button { revealed.toggle() } label: {
+                    Image(systemName: revealed ? "eye.slash" : "eye")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 4)))
+                .help(revealed ? "Hide token" : "Show token")
+                .accessibilityLabel(revealed ? "Hide token" : "Show token")
+            }
+            .padding(.leading, 8).padding(.trailing, 3).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(focused ? Theme.fieldBorderFocused : Theme.fieldBorder))
+            Button(checking ? "Checking…" : "Save") { save() }
                 .buttonStyle(SoftButtonStyle(prominent: true))
                 .disabled(!canSave)
         }

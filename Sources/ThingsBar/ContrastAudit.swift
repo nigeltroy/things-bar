@@ -51,6 +51,11 @@ enum ContrastAudit {
             text("save button (prominent)", Button("Save") {}.buttonStyle(SoftButtonStyle(prominent: true))),
             text("save button (disabled)", Button("Save") {}.buttonStyle(SoftButtonStyle(prominent: true)).disabled(true)),
             glyph("checkbox ring", Checkbox(checked: false) {}),
+            glyph("switch on", Toggle("", isOn: .constant(true)).labelsHidden().toggleStyle(GraySwitchStyle())),
+            glyph("switch off (track outline)", Capsule().strokeBorder(Theme.textTertiary, lineWidth: 1).frame(width: 28, height: 16)),
+            glyph("switch off (knob)", Circle().fill(Theme.textSecondary).frame(width: 10, height: 10)),
+            glyph("keyboard focus ring", Capsule().strokeBorder(Theme.focusRing, lineWidth: 1.5).frame(width: 60, height: 24)),
+            glyph("disabled button outline", Capsule().strokeBorder(Theme.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 2])).frame(width: 60, height: 24)),
             glyph("icon button glyph", IconButton(systemName: "gearshape", help: "Settings") {}),
             glyph("filter-on glyph", Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)),
             glyph("empty-state check", Image(systemName: "checkmark").font(.system(size: 18)).foregroundStyle(Theme.textTertiary)),
@@ -80,6 +85,8 @@ enum ContrastAudit {
             text("keyboard keys", Text("Space").font(.system(size: 12)).foregroundStyle(Theme.textMuted)),
             text("filters summary", Text("Off").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)),
             // Token
+            text("token error note", Note(text: TokenCheck.rejected, emphasized: true).frame(width: width)),
+            text("remove token button", Button("Remove Token…") {}.buttonStyle(SoftButtonStyle())),
             text("token prompt", Text(TokenGate.prompt).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)),
             text("token placeholder", SecureField("", text: .constant(""), prompt: Text("")).placeholder("Paste auth token", when: true)
                 .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.textPrimary).frame(width: 200)

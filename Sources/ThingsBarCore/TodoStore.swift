@@ -8,6 +8,8 @@ public final class TodoStore {
     /// Open to-dos of the current source, unfiltered, in Things' order.
     public private(set) var items: [TodoItem] = []
     public private(set) var errorMessage: String?
+    /// The last read of Things failed (Things unreachable), as opposed to a failed action.
+    public var thingsUnreachable: Bool { errorMessage != nil && errorCameFromRefresh }
     public private(set) var isLoading = false
     public private(set) var lastRefresh: Date?
     /// Whether a Things auth token is saved (edits need one). Set by the app.
@@ -39,7 +41,7 @@ public final class TodoStore {
     /// Fingerprint of the source at the last refresh (see `checkForChanges`).
     @ObservationIgnored private var lastChangeToken: String?
     /// A successful refresh only clears errors that a refresh caused, not action errors.
-    @ObservationIgnored private var errorCameFromRefresh = false
+    private var errorCameFromRefresh = false
 
     public init(client: ThingsClient, persistence: SettingsPersisting) {
         self.client = client
@@ -169,6 +171,7 @@ public final class TodoStore {
                     try await client.moveToTop(id: id, in: source)
                 }
             } catch {
+                noteFailure(error)
                 failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         }
@@ -194,6 +197,13 @@ public final class TodoStore {
     }
 
     public func dismissError() { errorMessage = nil; errorCameFromRefresh = false }
+
+    /// Bumped whenever Things didn't apply a URL-scheme write, the symptom of a token
+    /// Things no longer accepts. The app re-checks the token when it changes.
+    public private(set) var unappliedWrites = 0
+    private func noteFailure(_ error: Error) {
+        if error as? ThingsError == .changeNotApplied { unappliedWrites += 1 }
+    }
 
     // MARK: - Actions
 
@@ -341,6 +351,7 @@ public final class TodoStore {
             errorMessage = nil
             return true
         } catch {
+            noteFailure(error)
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             errorCameFromRefresh = false
             return false
