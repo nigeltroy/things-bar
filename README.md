@@ -3,20 +3,26 @@
 A macOS menu bar app that shows your top Things 3 to-do and lets you add,
 complete, edit, schedule, cancel and delete to-dos without opening Things.
 
-- **Menu bar:** text only. Shows the top 1, 2 or 3 to-dos of the list you choose,
-  separated by " | ", in Things' own order. It updates within about 2 s of changes
-  made in Things, reordering included.
+- **Menu bar:** text only (an icon is optional). Shows the top 1, 2 or 3 to-dos of
+  the list you choose, separated by " | ", in Things' own order, fitted to a Narrow,
+  Medium or Wide width so macOS never hides it. It updates within about 2 s of
+  changes made in Things, reordering included.
 - **Panel** (click): a grayscale Liquid Glass panel under the menu bar, like the
   system's menu extras. It holds the whole list, an add field, hover actions and an
   inline editor. Drag rows to reorder them; the new order is saved to Things (Today
-  and Inbox).
+  and Inbox). Complete, cancel, trash and reorder can be undone from the footer or
+  with ⌘Z.
 - **Settings** (gear, or ⌘,): shown inside the same panel. Source (built-in list,
   project, area or tag), filters, to-dos shown in the menu bar, title length,
   remaining count, appearance, open at login, and the Things auth token (stored in
   the Keychain).
 - **Quick menu** (right-click): complete or open the top to-do, refresh, settings.
-- **Keyboard:** ⌘N new to-do, ⌘↑/⌘↓ move the hovered to-do, ⌥⌘↑/⌥⌘↓ to top or
-  bottom, ⌘, settings, Esc back or close, ⌘Q quit.
+- **Keyboard:** ↑/↓ highlight a to-do, Space completes it, Return edits it, ⌘⌫
+  trashes it, ⌘↑/⌘↓ and ⌥⌘↑/⌥⌘↓ move it, ⌘Z undoes, ⌘N new to-do, ⌘, settings,
+  Esc back or close, ⌘Q quit.
+- **Accessibility:** text meets WCAG 4.5:1 over the glass, Increase Contrast raises
+  it further and adds a panel border, Reduce Motion turns off animation, and rows
+  have VoiceOver labels and actions.
 
 Requires macOS 14+ and Things 3 (tested with Things 3.25).
 
