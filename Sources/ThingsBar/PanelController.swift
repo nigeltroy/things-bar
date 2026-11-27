@@ -85,22 +85,48 @@ final class PanelController: NSObject {
         return fx
     }
 
-    var isShown: Bool { panel.isVisible }
+    /// Open from the user's point of view (true during the fade in, false during the fade out).
+    private(set) var isShown = false
 
     func setAppearance(_ appearance: NSAppearance?) { panel.appearance = appearance }
 
     func show(below button: NSStatusBarButton) {
         anchor = button
+        isShown = true
         fitToContent()
+        // A short fade, like the system's menu bar extras (none with Reduce Motion).
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        panel.alphaValue = reduceMotion ? 1 : 0
         panel.makeKeyAndOrderFront(nil)
+        if !reduceMotion {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+        }
         startMonitoringOutsideClicks()
     }
 
     func close() {
-        guard panel.isVisible else { return }
-        panel.orderOut(nil)
+        guard isShown else { return }
+        isShown = false
         stopMonitoringOutsideClicks()
         onClose()
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.orderOut(nil)
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.08
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.isShown else { return } // reopened meanwhile
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+            }
+        })
     }
 
     /// Sizes the panel to its content and places it under the status item, clamped to the screen.

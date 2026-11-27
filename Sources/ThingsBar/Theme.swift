@@ -38,6 +38,11 @@ enum Theme {
 
     static let hoverAnimation = Animation.easeOut(duration: 0.12)
 
+    /// `animation`, or none when Reduce Motion is on.
+    static func motion(_ animation: Animation) -> Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : animation
+    }
+
     /// System Settings → Accessibility → Display → Increase Contrast (or a self-test override).
     nonisolated(unsafe) static var forceIncreaseContrast = false
     static var increaseContrast: Bool {

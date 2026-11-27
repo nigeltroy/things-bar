@@ -21,7 +21,7 @@ final class PanelState {
         justMovedID = id
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(700))
-            if justMovedID == id { withAnimation(.easeOut(duration: 0.3)) { justMovedID = nil } }
+            if justMovedID == id { withAnimation(Theme.motion(.easeOut(duration: 0.3))) { justMovedID = nil } }
         }
     }
 
@@ -93,7 +93,7 @@ private struct KeyboardShortcuts: View {
               let index = store.visibleItems.firstIndex(where: { $0.id == id }) else { return }
         let to = max(0, min(target(index, store.visibleItems.count), store.visibleItems.count - 1))
         guard to != index else { return }
-        withAnimation(.snappy(duration: 0.2)) { store.moveVisible(store.visibleItems[index], to: to) }
+        withAnimation(Theme.motion(.snappy(duration: 0.2))) { store.moveVisible(store.visibleItems[index], to: to) }
         state.flash(id)
     }
 }
@@ -327,7 +327,7 @@ struct TodoListView: View {
         defer { endDrag() }
         guard let id = draggingID, let gap = dropGap,
               let item = store.visibleItems.first(where: { $0.id == id }) else { return draggingID != nil }
-        withAnimation(.snappy(duration: 0.22)) { store.moveVisible(item, toGap: gap) }
+        withAnimation(Theme.motion(.snappy(duration: 0.22))) { store.moveVisible(item, toGap: gap) }
         state.flash(id)
         return true
     }
@@ -724,7 +724,7 @@ struct TodoActions: View {
     let edit: (() -> Void)?
 
     private func move(to index: Int) {
-        withAnimation(.snappy(duration: 0.22)) { store.moveVisible(item, to: index) }
+        withAnimation(Theme.motion(.snappy(duration: 0.22))) { store.moveVisible(item, to: index) }
     }
 
     var body: some View {

@@ -112,7 +112,7 @@ struct SettingsPage: View {
 
     /// Filters are a power feature: one summary row in the List section that expands.
     @ViewBuilder private var filterRows: some View {
-        SettingsRow("Filters", onLabelTap: { withAnimation(.snappy(duration: 0.2)) { filtersExpanded.toggle() } }) {
+        SettingsRow("Filters", onLabelTap: { withAnimation(Theme.motion(.snappy(duration: 0.2))) { filtersExpanded.toggle() } }) {
             HStack(spacing: 6) {
                 Text(filterSummary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
@@ -120,7 +120,7 @@ struct SettingsPage: View {
                     .rotationEffect(.degrees(filtersExpanded ? 90 : 0))
             }
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.snappy(duration: 0.2)) { filtersExpanded.toggle() } }
+            .onTapGesture { withAnimation(Theme.motion(.snappy(duration: 0.2))) { filtersExpanded.toggle() } }
         }
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(filtersExpanded ? "Expanded" : "Collapsed")
