@@ -105,7 +105,6 @@ struct SettingsPage: View {
                 .help("Titles are shortened to fit, so macOS never hides ThingsBar for lack of room")
             }
             SettingsToggle("Show how many remain", isOn: $store.settings.showCountInMenuBar)
-            SettingsToggle("Show icon", isOn: $store.settings.showMenuBarIcon)
             PreviewLine(text: store.menuBarTitle)
         }
     }
@@ -145,7 +144,7 @@ struct SettingsPage: View {
             SettingsToggle("Only with a deadline", isOn: $store.settings.filter.onlyWithDeadline)
             SettingsToggle("Hide scheduled for later", isOn: $store.settings.filter.hideScheduledLater)
             SettingsRow("Contains") {
-                TextField("", text: $store.settings.filter.searchText, prompt: Text("Any text").foregroundStyle(Theme.textMuted))
+                TextField("Contains", text: $store.settings.filter.searchText, prompt: Text("")).placeholder("Any text", when: store.settings.filter.searchText.isEmpty, alignment: .trailing)
                     .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12)).multilineTextAlignment(.trailing)
                     .frame(width: 130)
                     .modifier(ValueChip())
@@ -206,20 +205,8 @@ struct SettingsPage: View {
 
     private var thingsSection: some View {
         SettingsSection("Things access") {
-            HStack(spacing: 6) {
-                SecureField("", text: $tokenDraft, prompt: Text("Paste token").foregroundStyle(Theme.textMuted))
-                    .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */.font(.system(size: 12))
-                    .padding(.horizontal, 8).frame(height: 24)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fieldFill))
-                    .onSubmit(saveToken)
-                Button("Save", action: saveToken)
-                    .buttonStyle(SoftButtonStyle(prominent: true))
-                    .disabled(tokenDraft.trimmingCharacters(in: .whitespaces) == (tokenStore.token ?? ""))
-            }
-            .padding(.horizontal, Theme.textInset).padding(.vertical, 4)
-            Note(text: tokenMessage ?? (store.hasAuthToken
-                ? "Saved in your Keychain. Needed to edit, schedule and reorder Today."
-                : "Needed to edit, schedule and reorder Today. In Things: Settings → General → Enable Things URLs → Manage."))
+            TokenField(draft: $tokenDraft, savedToken: tokenStore.token, save: saveToken)
+            Note(text: tokenMessage ?? "Saved in your Keychain. ThingsBar needs it to work; removing it signs ThingsBar out of Things.")
         }
     }
 
@@ -241,8 +228,9 @@ struct SettingsPage: View {
     private func saveToken() {
         do {
             try tokenStore.setToken(tokenDraft)
+            tokenMessage = tokenStore.token == nil ? nil : "Token saved to your Keychain."
+            if tokenStore.token == nil { state.route = .list } // back to the token prompt
             store.hasAuthToken = tokenStore.token != nil
-            tokenMessage = tokenStore.token == nil ? "Token removed." : "Token saved to your Keychain."
         } catch {
             tokenMessage = "Couldn't save: \(error.localizedDescription)"
         }

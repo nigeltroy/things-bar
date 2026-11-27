@@ -11,20 +11,32 @@ enum Theme {
     // Each token has a normal and an Increase Contrast value (System Settings →
     // Accessibility → Display), resolved per appearance by AppKit.
     static let textPrimary = Color.primary
-    /// Meta text (projects, deadlines, values): about 5.5:1 dark, 6.5:1 light on glass.
-    static let textSecondary = ink(0.68, 0.66, contrast: 0.82, 0.80)
-    /// Quiet text (tags, footer, notes, placeholders): the faintest text that still
-    /// reaches WCAG's 4.5:1 for small text over glass.
-    static let textMuted = ink(0.56, 0.57, contrast: 0.72, 0.72)
-    /// Decorative glyphs only, never text.
-    static let textTertiary = ink(0.30, 0.28, contrast: 0.55, 0.55)
+    // Values are set by the self-test's contrast audit (ContrastAudit.swift): every text
+    // token reaches WCAG's 4.5:1 for small text, and glyph tokens 3:1, in dark and light,
+    // on the panel and on field fills, over worst-case glass.
+    /// Meta text (projects, deadlines, values).
+    static let textSecondary = ink(0.80, 0.72, contrast: 0.88, 0.84)
+    /// Quiet text (tags, footer, notes): the faintest text, still 4.5:1 or more.
+    static let textMuted = ink(0.72, 0.64, contrast: 0.84, 0.78)
+    /// Placeholders in text fields. As legible as quiet text (an invisible prompt
+    /// hides what the field is for), told apart from typed text by typed text's
+    /// primary color.
+    /// Drawn by `PlaceholderOverlay`: macOS ignores a SwiftUI prompt's color and uses its
+    /// own, much fainter placeholder color.
+    static let placeholder = ink(0.72, 0.64, contrast: 0.84, 0.78)
+    /// Glyphs only, never text: 3:1, the minimum for meaningful graphics.
+    static let textTertiary = ink(0.48, 0.48, contrast: 0.62, 0.62)
+    /// Outline of text fields, so an empty field is visible as a field.
+    static let fieldBorder = ink(0.12, 0.12, contrast: 0.35, 0.35)
+    static let fieldBorderFocused = ink(0.30, 0.30, contrast: 0.55, 0.55)
     static let separator = ink(0.08, 0.08, contrast: 0.25, 0.25)
 
     /// Row hover: a color shift only, never a size change.
-    static let hoverFill = ink(0.07, 0.07, contrast: 0.16, 0.14)
+    static let hoverFill = ink(0.07, 0.07, contrast: 0.12, 0.12)
     /// Pressed, focused and field backgrounds.
-    static let fieldFill = ink(0.05, 0.05, contrast: 0.12, 0.10)
-    static let strongFill = ink(0.12, 0.12, contrast: 0.24, 0.22)
+    static let fieldFill = ink(0.05, 0.05, contrast: 0.08, 0.08)
+    /// Chips and banners. Kept low in dark mode: a lighter fill under white text lowers contrast.
+    static let strongFill = ink(0.10, 0.10, contrast: 0.14, 0.18)
     /// Drawn around the panel only with Increase Contrast, as system panels do.
     static let panelBorder = ink(0, 0, contrast: 0.45, 0.40)
 
@@ -101,12 +113,15 @@ struct SoftButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        // Disabled: a plain chip with secondary (still 4.5:1) text, not a faded button that's hard to read.
+        let solid = prominent && isEnabled
         configuration.label
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(prominent ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor)) : AnyShapeStyle(Theme.textPrimary))
+            .foregroundStyle(solid ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
+                             : AnyShapeStyle(isEnabled ? Theme.textPrimary : Theme.textSecondary))
             .padding(.horizontal, 11).padding(.vertical, 5)
-            .background(Capsule().fill(prominent ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.strongFill)))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .background(Capsule().fill(solid ? AnyShapeStyle(Theme.textPrimary) : AnyShapeStyle(Theme.strongFill)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())
     }
 }
@@ -121,5 +136,28 @@ struct SectionHeader: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Theme.textInset)
             .padding(.top, 10).padding(.bottom, 2)
+    }
+}
+
+/// Draws a text field's placeholder in `Theme.placeholder` while the field is empty.
+/// Use with an empty prompt: macOS draws SwiftUI prompts in its own faint color.
+struct PlaceholderOverlay: ViewModifier {
+    let text: String
+    let isEmpty: Bool
+    var alignment: Alignment = .leading
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: alignment) {
+            if isEmpty {
+                Text(text).foregroundStyle(Theme.placeholder).lineLimit(1)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+extension View {
+    func placeholder(_ text: String, when isEmpty: Bool, alignment: Alignment = .leading) -> some View {
+        modifier(PlaceholderOverlay(text: text, isEmpty: isEmpty, alignment: alignment))
     }
 }

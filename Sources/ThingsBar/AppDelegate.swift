@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let keyCode = event.keyCode, modifiers = event.modifierFlags
             let handled = MainActor.assumeIsolated { () -> Bool in
-                guard let self, self.panel.isShown, self.panel.panel.isKeyWindow,
+                guard let self, self.store.hasAuthToken, self.panel.isShown, self.panel.panel.isKeyWindow,
                       !(self.panel.panel.firstResponder is NSTextView) else { return false }
                 return ListKeys.handle(keyCode: keyCode, modifiers: modifiers, store: self.store, state: self.panelState)
             }
@@ -59,7 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeRefreshInterval()
         observeAppearance()
         watchForChanges()
-        Task { await store.refresh() }
+        // Without a token ThingsBar does nothing but ask for one: Things isn't read at all.
+        if store.hasAuthToken { Task { await store.refresh() } }
 
         if let dir = SelfTest.outputDirectory {
             SelfTest.run(delegate: self, outputDirectory: dir)
@@ -80,19 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return TodoStore(client: client, persistence: persistence)
     }
 
-    /// Keeps the menu bar title in sync with the store via Observation.
+    /// Keeps the menu bar title in sync with the store via Observation. Text only: no icon, ever.
     private func observeTitle() {
         withObservationTracking {
-            statusItem.button?.title = store.menuBarTitle
-            statusItem.button?.setAccessibilityLabel("ThingsBar: \(store.menuBarTitle)")
-            // Icon: off by default, but a problem reaching Things always shows one.
-            let symbol: String? = store.errorMessage != nil ? "exclamationmark.circle"
-                : store.settings.showMenuBarIcon ? "checkmark.circle" : nil
-            let image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
-            image?.isTemplate = true
-            statusItem.button?.image = image
-            statusItem.button?.imagePosition = image == nil ? .noImage : .imageLeading
-            statusItem.button?.toolTip = store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
+            let title = store.hasAuthToken ? store.menuBarTitle : "ThingsBar"
+            statusItem.button?.title = title
+            statusItem.button?.setAccessibilityLabel("ThingsBar: \(title)")
+            statusItem.button?.toolTip = !store.hasAuthToken ? TokenGate.prompt
+                : store.errorMessage ?? store.visibleItems.prefix(5).map(\.title).joined(separator: "\n")
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeTitle() }
         }
@@ -105,7 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(max(seconds, 15)), repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.store.refresh() }
+            Task { @MainActor in
+                guard let store = self?.store, store.hasAuthToken else { return }
+                await store.refresh()
+            }
         }
     }
 
@@ -113,7 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// refresh only when it differs (e.g. after reordering in Things).
     private func watchForChanges() {
         changeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.store.checkForChanges() }
+            Task { @MainActor in
+                guard let store = self?.store, store.hasAuthToken else { return }
+                await store.checkForChanges()
+            }
         }
         changeTimer?.tolerance = 0.5
     }
@@ -139,6 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Right-click menu: act on the top to-do without opening the panel.
     func makeQuickMenu() -> NSMenu {
         let menu = NSMenu()
+        guard store.hasAuthToken else {
+            menu.addItem(withTitle: "Enter Things Auth Token…", action: #selector(openPanel), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Quit ThingsBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            return menu
+        }
         if let top = store.topItem {
             let title = top.title.count > 40 ? String(top.title.prefix(39)) + "…" : top.title
             menu.addItem(withTitle: "Complete \u{201C}\(title)\u{201D}", action: #selector(completeTop), keyEquivalent: "").target = self
@@ -165,6 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func revealTop() { if let top = store.topItem { Task { await store.reveal(top) } } }
     @objc private func refreshNow() { Task { await store.refresh() } }
 
+    @objc private func openPanel() { if !panel.isShown { showPanel() } }
+
     @objc func openSettings() {
         panelState.route = .settings
         if !panel.isShown { showPanel() }
@@ -183,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPanel() {
         guard let button = statusItem.button else { return }
-        Task { await store.refresh() }
+        if store.hasAuthToken { Task { await store.refresh() } }
         button.highlight(true)
         if !SelfTest.isActive {
             panelState.opens = UserDefaults.standard.integer(forKey: "panelOpens") + 1

@@ -13,8 +13,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var menuBarWidth: MenuBarWidth = .medium
     /// Character limit per to-do, used only when no text measurer is available.
     public var menuBarTitleLength: Int = 32
-    /// Show a small icon before the title (off by default; the titles are the UI).
-    public var showMenuBarIcon = false
     /// Append the number of remaining to-dos, e.g. "Write report  +4".
     public var showCountInMenuBar = false
     public var appearance: Appearance = .dark
@@ -41,7 +39,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         refreshSeconds = try c.decodeIfPresent(Int.self, forKey: .refreshSeconds) ?? d.refreshSeconds
         menuBarItemCount = try c.decodeIfPresent(Int.self, forKey: .menuBarItemCount) ?? d.menuBarItemCount
         menuBarWidth = try c.decodeIfPresent(MenuBarWidth.self, forKey: .menuBarWidth) ?? d.menuBarWidth
-        showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? d.showMenuBarIcon
         menuBarTitleLength = try c.decodeIfPresent(Int.self, forKey: .menuBarTitleLength) ?? d.menuBarTitleLength
         showCountInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .showCountInMenuBar) ?? d.showCountInMenuBar
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance

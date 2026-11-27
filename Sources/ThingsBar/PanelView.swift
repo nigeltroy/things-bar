@@ -44,6 +44,11 @@ struct PanelView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
+            if !store.hasAuthToken {
+                // No token, no app: the only thing to do is enter one.
+                TokenGatePage(store: store, tokenStore: tokenStore, state: state)
+                    .transition(.opacity)
+            } else {
             switch state.route {
             case .list:
                 ListPage(store: store, state: state, openThings: openThings)
@@ -52,13 +57,15 @@ struct PanelView: View {
                 SettingsPage(store: store, state: state, tokenStore: tokenStore)
                     .transition(pageTransition(edge: .trailing))
             }
+            }
         }
         .frame(width: Theme.panelWidth)
         .fixedSize(horizontal: false, vertical: true)
         .id(state.displayOptionsVersion) // Increase Contrast toggled: redraw with new tokens
         .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: state.route)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: store.hasAuthToken)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in sizeChanged() }
-        .background(KeyboardShortcuts(store: store, state: state))
+        .background { if store.hasAuthToken { KeyboardShortcuts(store: store, state: state) } }
         .focusEffectDisabled() // no blue focus rings anywhere in the grayscale panel
         .overlay { RoundedRectangle(cornerRadius: Theme.panelCorner).strokeBorder(Theme.panelBorder, lineWidth: 1).allowsHitTesting(false) }
     }
@@ -132,12 +139,6 @@ struct ListPage: View {
                     .help("Filters are on")
             }
             Spacer()
-            if !store.visibleItems.isEmpty {
-            Text("\(store.visibleItems.count)")
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(Theme.textMuted)
-                .help("\(store.visibleItems.count) to-dos")
-            }
             IconButton(systemName: "gearshape", help: "Settings (⌘,)") { state.route = .settings }
         }
         .padding(.leading, Theme.edgeInset + Theme.textInset).padding(.trailing, Theme.edgeInset + 2)
@@ -155,7 +156,7 @@ struct ListPage: View {
     }
 }
 
-/// One quiet line: what's happening now, a fix-it button, a hint for new users,
+/// One quiet line: what's happening now, a hint for new users,
 /// or when the list was last read from Things.
 struct FooterStatus: View {
     let store: TodoStore
@@ -179,17 +180,6 @@ struct FooterStatus: View {
                 label("Order saved in Things")
             } else if store.isLoading && store.lastRefresh == nil {
                 label("Reading Things…")
-            } else if store.settings.source == .today && !store.hasAuthToken && store.visibleItems.count > 1 {
-                Button { state.route = .settings } label: {
-                    HStack(spacing: 2) {
-                        Text("Add auth token to reorder")
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
-                    }
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).focusEffectDisabled()
-                .help("Open Settings to add your Things auth token")
             } else if store.canReorder && store.visibleItems.count > 1 && state.opens <= Self.hintOpens {
                 label("Drag to reorder")
             } else if let last = store.lastRefresh {
@@ -270,13 +260,13 @@ struct TodoListView: View {
 
     private var rows: some View {
         VStack(spacing: 0) {
-            ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(store.visibleItems) { item in
                 Group {
                     if state.editingID == item.id {
                         TodoEditor(store: store, item: item) { state.editingID = nil }
                             .padding(.vertical, 2)
                     } else {
-                        TodoRow(store: store, item: item, inMenuBar: index < store.settings.menuBarItemCount,
+                        TodoRow(store: store, item: item,
                                 edit: { state.editingID = item.id },
                                 highlighted: state.justMovedID == item.id,
                                 isDragged: draggingID == item.id,
@@ -438,7 +428,8 @@ struct EmptyStateView: View {
 
 struct AddTodoField: View {
     let store: TodoStore
-    @State private var title = ""
+    @State private var title: String
+    init(store: TodoStore, title: String = "") { self.store = store; _title = State(initialValue: title) }
     @FocusState private var focused: Bool
     @State private var hovering = false
 
@@ -448,7 +439,7 @@ struct AddTodoField: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(focused ? Theme.textPrimary : Theme.textMuted)
                 .frame(width: 16)
-            TextField("", text: $title, prompt: Text("New To-Do").foregroundStyle(Theme.textMuted))
+            TextField("New To-Do", text: $title, prompt: Text("")).placeholder("New To-Do", when: title.isEmpty)
                 .textFieldStyle(.plain).tint(Theme.textPrimary) /* gray caret */
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textPrimary)
@@ -492,8 +483,6 @@ struct AddTodoField: View {
 struct TodoRow: View {
     let store: TodoStore
     let item: TodoItem
-    /// Shown in the menu bar: marked with a slim bar at the leading edge.
-    let inMenuBar: Bool
     let edit: () -> Void
     /// Flash after being moved.
     var highlighted = false
@@ -540,14 +529,6 @@ struct TodoRow: View {
         .frame(minHeight: 30)
         .background(RoundedRectangle(cornerRadius: Theme.rowCorner)
             .fill(highlighted ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
-        .overlay(alignment: .topLeading) {
-            if inMenuBar {
-                Capsule().fill(Theme.textMuted).frame(width: 2.5, height: 14)
-                    .padding(.leading, 3).padding(.top, 8) // level with the checkbox
-                    .help("Shown in the menu bar")
-                    .accessibilityHidden(true)
-            }
-        }
         // Actions float over the row: showing them never changes the row's size.
         .overlay(alignment: .topTrailing) {
             Group {
@@ -782,21 +763,17 @@ struct TodoEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("", text: $title, prompt: Text("Title").foregroundStyle(Theme.textMuted))
+            TextField("Title", text: $title, prompt: Text("")).placeholder("Title", when: title.isEmpty)
                 .textFieldStyle(.plain).tint(Theme.textPrimary).font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary).focused($titleFocused)
                 .onSubmit { if canSave { save() } } // Return in the title saves, as in Things
-            TextField("", text: $notes, prompt: Text("Notes").foregroundStyle(Theme.textMuted), axis: .vertical)
+            TextField("Notes", text: $notes, prompt: Text(""), axis: .vertical).placeholder("Notes", when: notes.isEmpty, alignment: .topLeading)
                 .textFieldStyle(.plain).tint(Theme.textPrimary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1...6)
             HStack(spacing: 6) {
                 deadlineChip
                 TagPicker(all: store.catalog.tagNames, selection: $tags)
                 Spacer()
-            }
-            if !store.hasAuthToken {
-                Text("Add your Things auth token in Settings to save edits.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             HStack(spacing: 6) {
                 Spacer()
@@ -830,8 +807,8 @@ struct TodoEditor: View {
                         .accessibilityLabel("Remove deadline")
                 }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(deadline == nil ? Theme.textSecondary : Theme.textPrimary)
+            .font(.system(size: 11, weight: deadline == nil ? .regular : .semibold))
+            .foregroundStyle(Theme.textPrimary) // secondary text on a chip fill falls below 4.5:1
             .padding(.horizontal, 7).padding(.vertical, 3)
             .background(Capsule().fill(Theme.strongFill))
             .contentShape(Capsule())
@@ -876,7 +853,7 @@ struct TagPicker: View {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
             }
             .font(.system(size: 11))
-            .foregroundStyle(Theme.textSecondary)
+            .foregroundStyle(Theme.textPrimary)
             .padding(.horizontal, 7).padding(.vertical, 3)
             .background(Capsule().fill(Theme.strongFill))
         }
@@ -910,7 +887,7 @@ struct ErrorBanner: View {
 @MainActor
 enum ListKeys {
     static func handle(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, store: TodoStore, state: PanelState) -> Bool {
-        guard state.route == .list, state.editingID == nil else { return false }
+        guard store.hasAuthToken, state.route == .list, state.editingID == nil else { return false }
         let items = store.visibleItems
         let index = state.selectedID.flatMap { id in items.firstIndex { $0.id == id } }
         let mods = modifiers.intersection([.command, .option, .control, .shift])

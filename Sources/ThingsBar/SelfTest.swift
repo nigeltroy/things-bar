@@ -64,6 +64,7 @@ enum SelfTest {
             report["statusItemHasImage"] = delegate.statusItem.button?.image != nil
             write(json: report, to: dir.appendingPathComponent("status.json"))
             renderViews(delegate, dir)
+            ContrastAudit.run(store: store(delegate), dir: dir) // writes contrast.json
 
             var steps: [[String: Any]] = []
             if !useLiveThings {
@@ -114,13 +115,26 @@ enum SelfTest {
         if let first = store.visibleItems.first {
             snapshot(GlassPreview {
                 VStack(spacing: 0) {
-                    TodoRow(store: store, item: first, inMenuBar: true, edit: {}, forceHover: true)
-                    ForEach(store.visibleItems.dropFirst().prefix(2)) { TodoRow(store: store, item: $0, inMenuBar: false, edit: {}) }
+                    TodoRow(store: store, item: first, edit: {}, forceHover: true)
+                    ForEach(store.visibleItems.dropFirst().prefix(2)) { TodoRow(store: store, item: $0, edit: {}) }
                 }.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
             }, to: dir.appendingPathComponent("hover.png"))
             snapshot(GlassPreview {
                 TodoEditor(store: store, item: first) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
             }, to: dir.appendingPathComponent("editor.png"))
+            if let plain = store.visibleItems.first(where: { $0.notes.isEmpty }) {
+                for (name, dark) in [("editor-empty-notes.png", true), ("editor-empty-notes-light.png", false)] {
+                    snapshot(GlassPreview {
+                        TodoEditor(store: store, item: plain) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
+                    }, to: dir.appendingPathComponent(name), dark: dark)
+                }
+            }
+        }
+        // No token: the panel is only the token prompt.
+        let gateStore = TodoStore(client: InMemoryThingsClient(), persistence: ephemeralSettings())
+        for (name, dark) in [("gate.png", true), ("gate-light.png", false)] {
+            snapshot(GlassPreview { PanelView(store: gateStore, state: PanelState(), tokenStore: MemoryTokenStore()) },
+                     to: dir.appendingPathComponent(name), dark: dark)
         }
         snapshot(GlassPreview {
             ErrorBanner(message: ThingsError.changeNotApplied.errorDescription!) {}.padding(Theme.edgeInset).frame(width: Theme.panelWidth)
@@ -134,7 +148,7 @@ enum SelfTest {
         for item in store.visibleItems {
             var h: [CGFloat] = []
             for hover in [false, true] {
-                h.append(NSHostingView(rootView: TodoRow(store: store, item: item, inMenuBar: false, edit: {}, forceHover: hover)
+                h.append(NSHostingView(rootView: TodoRow(store: store, item: item, edit: {}, forceHover: hover)
                     .frame(width: Theme.panelWidth - 2 * Theme.edgeInset)).fittingSize.height)
             }
             out.append(["title": item.title, "normal": h[0], "hover": h[1]])
@@ -172,6 +186,35 @@ enum SelfTest {
         })
         out.append(contentsOf: await panelSteps(d))
         out.append(await step("filter Home", d) { s.settings.filter.includeTags = ["Home"]; return true })
+        out.append(contentsOf: await tokenGateSteps(d))
+        return out
+    }
+
+    /// Without a token the app only asks for one: plain "ThingsBar" in the menu bar, a
+    /// quick menu with nothing but the token prompt and Quit, no list keys.
+    static func tokenGateSteps(_ d: AppDelegate) async -> [[String: Any]] {
+        let s = d.store!
+        var out: [[String: Any]] = []
+        out.append(await step("no token: only the token prompt", d) {
+            try? d.tokenStore.setToken(nil)
+            s.hasAuthToken = false
+            try? await Task.sleep(for: .milliseconds(50))
+            let menu = d.makeQuickMenu().items.map { $0.isSeparatorItem ? "---" : $0.title }
+            let keys = ListKeys.handle(keyCode: 125, modifiers: [], store: s, state: d.panelState)
+            d.showPanel(); try? await Task.sleep(for: .milliseconds(300))
+            let panelHeight = d.panel.panel.frame.height
+            d.panel.close()
+            NSLog("gate: menu %@, keys handled %d, panel height %.0f", menu.description, keys ? 1 : 0, panelHeight)
+            return d.statusItem.button?.title == "ThingsBar" && d.statusItem.button?.image == nil
+                && menu == ["Enter Things Auth Token…", "---", "Quit ThingsBar"] && !keys && panelHeight < 200
+        })
+        out.append(await step("token saved: the list is back", d) {
+            try? d.tokenStore.setToken("fixture-token")
+            s.hasAuthToken = true
+            await s.refresh()
+            try? await Task.sleep(for: .milliseconds(50))
+            return d.statusItem.button?.title != "ThingsBar" && !s.visibleItems.isEmpty
+        })
         return out
     }
 

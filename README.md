@@ -3,7 +3,10 @@
 A macOS menu bar app that shows your top Things 3 to-do and lets you add,
 complete, edit, schedule, cancel and delete to-dos without opening Things.
 
-- **Menu bar:** text only (an icon is optional). Shows the top 1, 2 or 3 to-dos of
+- **Auth token first:** ThingsBar needs Things' auth token to work. Until one is
+  saved, the menu bar reads "ThingsBar" and the panel only asks for the token;
+  Things isn't read at all.
+- **Menu bar:** text only, never an icon. Shows the top 1, 2 or 3 to-dos of
   the list you choose, separated by " | ", in Things' own order, fitted to a Narrow,
   Medium or Wide width so macOS never hides it. It updates within about 2 s of
   changes made in Things, reordering included.
@@ -20,7 +23,8 @@ complete, edit, schedule, cancel and delete to-dos without opening Things.
 - **Keyboard:** ↑/↓ highlight a to-do, Space completes it, Return edits it, ⌘⌫
   trashes it, ⌘↑/⌘↓ and ⌥⌘↑/⌥⌘↓ move it, ⌘Z undoes, ⌘N new to-do, ⌘, settings,
   Esc back or close, ⌘Q quit.
-- **Accessibility:** text meets WCAG 4.5:1 over the glass, Increase Contrast raises
+- **Accessibility:** all text and placeholders meet WCAG 4.5:1 and glyphs 3:1 over
+  the glass in dark and light (checked by the self-test's contrast audit), Increase Contrast raises
   it further and adds a panel border, Reduce Motion turns off animation, and rows
   have VoiceOver labels and actions.
 
@@ -50,9 +54,10 @@ To keep it, copy `build/ThingsBar.app` to `/Applications` before turning on
 On first use macOS asks whether ThingsBar may control Things. Choose OK. You can
 change this later in System Settings → Privacy & Security → Automation.
 
-**Auth token:** editing needs Things' URL-scheme token. In Things, open Settings →
-General → Enable Things URLs → Manage, copy the token, and paste it into ThingsBar's
-Settings. Reading, adding, completing and deleting work without it.
+**Auth token:** ThingsBar needs Things' URL-scheme token before it does anything. In
+Things, open Settings → General → Enable Things URLs → Manage, copy the token, and
+paste it into the panel when ThingsBar asks. Change or remove it later in Settings →
+Things access.
 
 ## Tests
 
@@ -66,8 +71,10 @@ The integration tests drive the real Things. They create uniquely named to-dos
 
 The app can also test itself without Accessibility or Screen Recording access. It
 opens its own panel and checks its placement, settings navigation and Esc handling,
-measures that hovering doesn't resize rows, and writes a JSON report plus PNG renders
-of its views. Real Liquid Glass is composited by the window server, so the renders
+measures that hovering doesn't resize rows, checks the no-token prompt, and writes a
+JSON report plus PNG renders of its views. A contrast audit (`contrast.json`) renders
+every text, placeholder and glyph in dark and light, with and without Increase
+Contrast, over typical and worst-case glass, and measures the pixels. Real Liquid Glass is composited by the window server, so the renders
 approximate it over a sample wallpaper:
 
 ```bash
