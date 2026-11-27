@@ -1,11 +1,43 @@
 import AppKit
 import SwiftUI
+import ThingsBarCore
 
 /// Launch with `--selftest <dir>`: the app reports on itself and quits.
 /// Writes status.json (status item state) and PNG renders of its own views,
 /// so the UI can be verified without Accessibility or Screen Recording access.
 @MainActor
 enum SelfTest {
+    static var isActive: Bool { CommandLine.arguments.contains("--selftest") }
+    /// `--selftest-live` reads the real Things instead of fixture data.
+    static var useLiveThings: Bool { CommandLine.arguments.contains("--selftest-live") }
+
+    static func makeStore() -> TodoStore {
+        if useLiveThings {
+            let store = AppDelegate.makeLiveStore(persistence: ephemeralSettings())
+            // `--selftest-source <built-in list name>` e.g. Anytime
+            let args = CommandLine.arguments
+            if let i = args.firstIndex(of: "--selftest-source"), i + 1 < args.count,
+               let source = ThingsSource.builtInLists.first(where: { $0.name == args[i + 1] }) {
+                store.settings.source = source
+            }
+            return store
+        }
+        let work = ThingsSource(kind: .project, identifier: "P1", name: "Work")
+        let client = InMemoryThingsClient(
+            catalog: SourceCatalog(projects: [work], tags: [ThingsSource(kind: .tag, identifier: "Home", name: "Home")]),
+            items: [.today: [
+                TodoItem(id: "1", title: "Draft the quarterly planning doc", tags: ["Office"], projectID: "P1"),
+                TodoItem(id: "2", title: "Book dentist appointment", tags: ["Home"]),
+                TodoItem(id: "3", title: "Review pull requests", projectID: "P1"),
+            ]])
+        return TodoStore(client: client, persistence: ephemeralSettings())
+    }
+
+    /// Throwaway settings so a self-test never touches real preferences.
+    static func ephemeralSettings() -> SettingsPersisting {
+        UserDefaultsSettings(defaults: UserDefaults(suiteName: "thingsbar.selftest.\(UUID())")!)
+    }
+
     static var outputDirectory: URL? {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--selftest"), i + 1 < args.count else { return nil }
@@ -18,13 +50,18 @@ enum SelfTest {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             let item = delegate.statusItem!
             let frame = item.button?.window?.frame ?? .zero
+            let store = delegate.store!
             let report: [String: Any] = [
                 "isVisible": item.isVisible,
                 "title": item.button?.title ?? "",
                 "buttonWindowFrame": NSStringFromRect(frame),
+                "source": store.settings.source.name,
+                "itemCount": store.visibleItems.count,
+                "items": store.visibleItems.map(\.title),
+                "error": store.errorMessage ?? NSNull(),
             ]
             write(json: report, to: dir.appendingPathComponent("status.json"))
-            snapshot(PopoverView(), to: dir.appendingPathComponent("popover.png"))
+            snapshot(PopoverView(store: store), to: dir.appendingPathComponent("popover.png"))
             NSApp.terminate(nil)
         }
     }
