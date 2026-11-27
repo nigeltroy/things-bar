@@ -41,7 +41,7 @@ struct TokenGatePage: View {
             Text(TokenGate.prompt)
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 12).padding(.bottom, 8)
+                .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 18).padding(.bottom, 10)
                 .accessibilityAddTraits(.isHeader)
             TokenField(draft: $draft, savedToken: nil, autofocus: true, checking: checking, save: save)
                 .padding(.horizontal, Theme.edgeInset)
@@ -53,7 +53,7 @@ struct TokenGatePage: View {
                     .buttonStyle(FocusRingButtonStyle(shape: RoundedRectangle(cornerRadius: 4)))
                     .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             }
-            .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 2).padding(.bottom, 10)
+            .padding(.horizontal, Theme.edgeInset + Theme.textInset).padding(.top, 4).padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
