@@ -7,6 +7,18 @@ final class PanelState {
     enum Route { case list, settings }
     var route: Route = .list
     var editingID: String?
+    /// The row under the pointer: target of ⌘↑/⌘↓ shortcuts.
+    var hoveredID: String?
+    /// Briefly set after a drop so the moved row flashes.
+    var justMovedID: String?
+
+    func flash(_ id: String) {
+        justMovedID = id
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(700))
+            if justMovedID == id { withAnimation(.easeOut(duration: 0.3)) { justMovedID = nil } }
+        }
+    }
 
     /// Esc: leave the editor or settings first; returns false when there's nothing to back out of.
     func back() -> Bool {
@@ -57,8 +69,22 @@ private struct KeyboardShortcuts: View {
             Button("") { _ = state.back() }.keyboardShortcut("[", modifiers: .command)
             Button("") { Task { await store.refresh() } }.keyboardShortcut("r", modifiers: .command)
             Button("") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q", modifiers: .command)
+            // Same shortcuts as Things: ⌘↑/↓ move, ⌥⌘↑/↓ move to top/bottom.
+            Button("") { move { i, _ in i - 1 } }.keyboardShortcut(.upArrow, modifiers: .command)
+            Button("") { move { i, _ in i + 1 } }.keyboardShortcut(.downArrow, modifiers: .command)
+            Button("") { move { _, _ in 0 } }.keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            Button("") { move { _, n in n - 1 } }.keyboardShortcut(.downArrow, modifiers: [.command, .option])
         }
         .buttonStyle(.plain).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+    }
+
+    private func move(_ target: (Int, Int) -> Int) {
+        guard state.route == .list, store.canReorder, let id = state.hoveredID,
+              let index = store.visibleItems.firstIndex(where: { $0.id == id }) else { return }
+        let to = max(0, min(target(index, store.visibleItems.count), store.visibleItems.count - 1))
+        guard to != index else { return }
+        withAnimation(.snappy(duration: 0.2)) { store.moveVisible(store.visibleItems[index], to: to) }
+        state.flash(id)
     }
 }
 
@@ -122,7 +148,8 @@ struct ListPage: View {
     }
 
     private var statusText: String {
-        if store.isSyncingOrder { return "Saving order to Things…" }
+        if store.isSyncingOrder || store.hasPendingOrder { return "Saving order to Things…" }
+        if store.orderJustSaved { return "Order saved in Things" }
         if store.isLoading && store.lastRefresh == nil { return "Reading Things…" }
         if store.canReorder { return "Drag to reorder" }
         return store.reorderUnavailableReason ?? "Synced with Things"
@@ -135,26 +162,181 @@ struct TodoListView: View {
     let store: TodoStore
     let state: PanelState
 
+    @State private var draggingID: String?
+    @State private var dropGap: Int?
+    @State private var frames: [String: CGRect] = [:]      // row frames in the list's content
+    @State private var viewportHeight: CGFloat = 0
+    @State private var scrollOffset: CGFloat = 0           // content y at the viewport's top
+    @State private var lastAutoScroll = Date.distantPast
+
+    init(store: TodoStore, state: PanelState, previewDrag: (id: String, gap: Int)? = nil) {
+        self.store = store; self.state = state
+        _draggingID = State(initialValue: previewDrag?.id)
+        _dropGap = State(initialValue: previewDrag?.gap)
+    }
+
+    private static let content = "thingsbar.list.content"
+    private static let viewport = "thingsbar.list.viewport"
+
     var body: some View {
         if store.visibleItems.isEmpty {
             EmptyStateView(loading: store.isLoading && store.lastRefresh == nil, filtered: store.settings.filter.isActive && !store.items.isEmpty)
         } else {
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
-                        if state.editingID == item.id {
-                            TodoEditor(store: store, item: item) { state.editingID = nil }
-                                .padding(.vertical, 2)
-                        } else {
-                            TodoRow(store: store, item: item, isTop: index == 0) { state.editingID = item.id }
-                        }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    rows
+                        .coordinateSpace(name: Self.content)
+                        .overlay(alignment: .topLeading) { insertionIndicator }
+                        .onDrop(of: [.text], delegate: ReorderDropDelegate(list: self, proxy: proxy))
+                        .onGeometryChange(for: CGFloat.self) { -$0.frame(in: .named(Self.viewport)).minY } action: { scrollOffset = $0 }
+                        .padding(.horizontal, Theme.edgeInset).padding(.vertical, 3)
+                }
+                .coordinateSpace(name: Self.viewport)
+                .scrollIndicators(.automatic)
+                .frame(maxHeight: 440)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+            }
+        }
+    }
+
+    private var rows: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
+                Group {
+                    if state.editingID == item.id {
+                        TodoEditor(store: store, item: item) { state.editingID = nil }
+                            .padding(.vertical, 2)
+                    } else {
+                        TodoRow(store: store, item: item, isTop: index == 0,
+                                edit: { state.editingID = item.id },
+                                highlighted: state.justMovedID == item.id,
+                                hoverChanged: { inside in
+                                    if inside { state.hoveredID = item.id } else if state.hoveredID == item.id { state.hoveredID = nil }
+                                })
+                        .opacity(draggingID == item.id ? 0.4 : 1)
+                        .modifier(Draggable(enabled: store.canReorder && state.editingID == nil && !store.pendingIDs.contains(item.id),
+                                            item: item, begin: { begin(item) }))
                     }
                 }
-                .padding(.horizontal, Theme.edgeInset).padding(.vertical, 2)
+                .id(item.id)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.content)) } action: { frames[item.id] = $0 }
             }
-            .scrollIndicators(.automatic)
-            .frame(maxHeight: 440)
-            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Drag state
+
+    private func begin(_ item: TodoItem) {
+        draggingID = item.id
+        state.editingID = nil
+        // SwiftUI reports no "drag ended" for drops outside the list: watch the mouse.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            while NSEvent.pressedMouseButtons != 0 { try? await Task.sleep(for: .milliseconds(80)) }
+            try? await Task.sleep(for: .milliseconds(150))
+            if draggingID == item.id { endDrag() }
+        }
+    }
+
+    fileprivate func endDrag() {
+        withAnimation(.easeOut(duration: 0.15)) { draggingID = nil; dropGap = nil }
+    }
+
+    fileprivate func updateDrop(at y: CGFloat, proxy: ScrollViewProxy) {
+        guard let id = draggingID, let from = store.visibleItems.firstIndex(where: { $0.id == id }) else { return }
+        let mids = store.visibleItems.map { Double(frames[$0.id]?.midY ?? .infinity) }
+        let newGap = ReorderPlan.dropGap(pointerY: y, rowMidYs: mids, from: from)
+        if newGap != dropGap { withAnimation(.easeOut(duration: 0.1)) { dropGap = newGap } }
+        autoScroll(nearY: y - scrollOffset, proxy: proxy)
+    }
+
+    fileprivate func drop() -> Bool {
+        defer { endDrag() }
+        guard let id = draggingID, let gap = dropGap,
+              let item = store.visibleItems.first(where: { $0.id == id }) else { return draggingID != nil }
+        withAnimation(.snappy(duration: 0.22)) { store.moveVisible(item, toGap: gap) }
+        state.flash(id)
+        return true
+    }
+
+    /// Scrolls one row when the pointer is within 28 pt of the viewport's top or bottom.
+    private func autoScroll(nearY y: CGFloat, proxy: ScrollViewProxy) {
+        guard viewportHeight > 0, Date().timeIntervalSince(lastAutoScroll) > 0.12 else { return }
+        let items = store.visibleItems
+        let visible = items.filter { item in
+            guard let f = frames[item.id] else { return false }
+            return f.maxY > scrollOffset && f.minY < scrollOffset + viewportHeight
+        }
+        if y < 28, let first = visible.first, let i = items.firstIndex(of: first), i > 0 {
+            lastAutoScroll = Date()
+            withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(items[i - 1].id, anchor: .top) }
+        } else if y > viewportHeight - 28, let last = visible.last, let i = items.firstIndex(of: last), i < items.count - 1 {
+            lastAutoScroll = Date()
+            withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(items[i + 1].id, anchor: .bottom) }
+        }
+    }
+
+    /// A 2 pt line with a small ring at its start, centred in the gap.
+    @ViewBuilder private var insertionIndicator: some View {
+        if let gap = dropGap, let y = indicatorY(gap) {
+            HStack(spacing: 0) {
+                Circle().strokeBorder(Theme.textPrimary.opacity(0.8), lineWidth: 1.5).frame(width: 7, height: 7)
+                Rectangle().fill(Theme.textPrimary.opacity(0.8)).frame(height: 2)
+            }
+            .padding(.leading, Theme.textInset - 3).padding(.trailing, Theme.textInset)
+            .offset(y: y - 3.5)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func indicatorY(_ gap: Int) -> CGFloat? {
+        let items = store.visibleItems
+        guard let last = items.last, let bottom = frames[last.id]?.maxY else { return nil }
+        let y = gap < items.count ? frames[items[gap].id]?.minY ?? bottom : bottom
+        return min(max(y, 4), bottom - 4) // keep the ring inside the scroll view's clip
+    }
+
+    fileprivate var isDragging: Bool { draggingID != nil }
+}
+
+private struct ReorderDropDelegate: DropDelegate {
+    let list: TodoListView
+    let proxy: ScrollViewProxy
+
+    func validateDrop(info: DropInfo) -> Bool { list.isDragging } // only our own rows
+    func dropEntered(info: DropInfo) { list.updateDrop(at: info.location.y, proxy: proxy) }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        list.updateDrop(at: info.location.y, proxy: proxy)
+        return DropProposal(operation: .move)
+    }
+    func performDrop(info: DropInfo) -> Bool { list.drop() }
+}
+
+/// Makes a row draggable when the list can be reordered. The preview is a compact
+/// copy of the row; the original stays in place, dimmed.
+private struct Draggable: ViewModifier {
+    let enabled: Bool
+    let item: TodoItem
+    let begin: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onDrag {
+                begin()
+                return NSItemProvider(object: "thingsbar-todo:\(item.id)" as NSString)
+            } preview: {
+                HStack(spacing: 9) {
+                    Circle().strokeBorder(Theme.textTertiary, lineWidth: 1.25).frame(width: 16, height: 16)
+                    Text(item.title.isEmpty ? "Untitled" : item.title).font(.system(size: 13)).lineLimit(1)
+                }
+                .padding(.horizontal, 10).frame(width: Theme.panelWidth - 40, height: 30, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(.regularMaterial))
+            }
+        } else {
+            content
         }
     }
 }
@@ -234,6 +416,9 @@ struct TodoRow: View {
     let item: TodoItem
     let isTop: Bool
     let edit: () -> Void
+    /// Flash after being moved.
+    var highlighted = false
+    var hoverChanged: (Bool) -> Void = { _ in }
     /// Self-test only: render the hover state without a mouse.
     var forceHover = false
     @State private var hoveringState = false
@@ -270,7 +455,8 @@ struct TodoRow: View {
         }
         .padding(.horizontal, Theme.textInset).padding(.vertical, 6)
         .frame(minHeight: 30)
-        .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(hovering ? Theme.hoverFill : .clear))
+        .background(RoundedRectangle(cornerRadius: Theme.rowCorner)
+            .fill(highlighted ? Theme.strongFill : hovering ? Theme.hoverFill : .clear))
         // Actions float over the row: showing them never changes the row's size.
         .overlay(alignment: .topTrailing) {
             Group {
@@ -288,7 +474,7 @@ struct TodoRow: View {
             .padding(.top, 3).padding(.trailing, 4)
         }
         .contentShape(Rectangle())
-        .onHover { h in withAnimation(Theme.hoverAnimation) { hoveringState = h } }
+        .onHover { h in withAnimation(Theme.hoverAnimation) { hoveringState = h }; hoverChanged(h) }
         .onTapGesture(count: 2, perform: edit)
         .contextMenu { TodoActions(store: store, item: item, edit: edit) }
         .help(item.notes)
@@ -424,6 +610,10 @@ struct TodoActions: View {
     let item: TodoItem
     let edit: (() -> Void)?
 
+    private func move(to index: Int) {
+        withAnimation(.snappy(duration: 0.22)) { store.moveVisible(item, to: index) }
+    }
+
     var body: some View {
         if let edit { Button("Edit…", action: edit) }
         Button("Open in Things") { Task { await store.reveal(item) } }
@@ -431,10 +621,10 @@ struct TodoActions: View {
             let index = store.visibleItems.firstIndex(of: item) ?? 0
             let last = store.visibleItems.count - 1
             Divider()
-            Button("Move to Top") { store.moveVisible(item, to: 0) }.disabled(index == 0)
-            Button("Move Up") { store.moveVisible(item, to: index - 1) }.disabled(index == 0)
-            Button("Move Down") { store.moveVisible(item, to: index + 1) }.disabled(index >= last)
-            Button("Move to Bottom") { store.moveVisible(item, to: last) }.disabled(index >= last)
+            Button("Move to Top") { move(to: 0) }.disabled(index == 0)
+            Button("Move Up") { move(to: index - 1) }.disabled(index == 0)
+            Button("Move Down") { move(to: index + 1) }.disabled(index >= last)
+            Button("Move to Bottom") { move(to: last) }.disabled(index >= last)
         }
         Divider()
         Menu("When") {

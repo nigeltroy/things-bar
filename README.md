@@ -3,14 +3,20 @@
 A macOS menu bar app that shows your top Things 3 to-do and lets you add,
 complete, edit, schedule, cancel and delete to-dos without opening Things.
 
-- **Menu bar:** the first to-do of the list you choose, in Things' own order.
-- **Popover** (click): the whole list, an add field, hover actions, an inline editor.
+- **Menu bar:** text only. Shows the top 1, 2 or 3 to-dos of the list you choose,
+  separated by " | ", in Things' own order. It updates within about 2 s of changes
+  made in Things, reordering included.
+- **Panel** (click): a grayscale Liquid Glass panel under the menu bar, like the
+  system's menu extras. It holds the whole list, an add field, hover actions and an
+  inline editor. Drag rows to reorder them; the new order is saved to Things (Today
+  and Inbox).
+- **Settings** (gear, or ⌘,): shown inside the same panel. Source (built-in list,
+  project, area or tag), filters, to-dos shown in the menu bar, title length,
+  remaining count, appearance, open at login, and the Things auth token (stored in
+  the Keychain).
 - **Quick menu** (right-click): complete or open the top to-do, refresh, settings.
-- **Settings:** source (built-in list, project, area or tag), tag/deadline/date/text
-  filters, title length, remaining count, refresh interval, appearance, open at login,
-  and the Things auth token (stored in the Keychain).
-- **Design:** low-contrast warm dark theme modelled on Claude's dark mode (light and
-  system appearances also available).
+- **Keyboard:** ⌘N new to-do, ⌘↑/⌘↓ move the hovered to-do, ⌥⌘↑/⌥⌘↓ to top or
+  bottom, ⌘, settings, Esc back or close, ⌘Q quit.
 
 Requires macOS 14+ and Things 3 (tested with Things 3.25).
 
@@ -53,7 +59,10 @@ The integration tests drive the real Things. They create uniquely named to-dos
 (`tbtest-…`) and move them to Things' Trash afterwards.
 
 The app can also test itself without Accessibility or Screen Recording access. It
-writes a JSON report and PNG renders of its own views:
+opens its own panel and checks its placement, settings navigation and Esc handling,
+measures that hovering doesn't resize rows, and writes a JSON report plus PNG renders
+of its views. Real Liquid Glass is composited by the window server, so the renders
+approximate it over a sample wallpaper:
 
 ```bash
 build/ThingsBar.app/Contents/MacOS/ThingsBar --selftest /tmp/tb            # fixture data
@@ -88,7 +97,9 @@ plus Things' scripting dictionary (`sdef /Applications/Things3.app`).
 | Add | URL scheme `add` | AppleScript `make … at` put to-dos in the Inbox regardless of target |
 | Edit title/notes/deadline/tags, schedule | URL scheme `update` + auth token | Documented; supports "This Evening"; runs in the background |
 | Complete, cancel, delete (to Trash) | Apple Events `set status` / `delete` | Synchronous, real errors; the URL scheme has no delete |
-| Move to top (Today only) | `update when=evening`, then `when=today` | Things has no reorder API (see below) |
+| Reorder Today | Repeated "move to top": `update when=evening`, then `when=today` | Things has no reorder API (see below) |
+| Reorder Inbox | Repeated "move to top": Apple Event `move` to Someday, then back to Inbox | Same; needs no token |
+| Notice changes made in Things | Every 2 s, compare IDs, modification dates and titles (three small Apple Events) | Things has no change notifications |
 
 Design decisions:
 
@@ -107,14 +118,20 @@ Design decisions:
 ## Limitations
 
 - **Reordering:** Things documents no way to set a to-do's position (AppleScript,
-  URL scheme or JSON). Rescheduling a Today to-do This Evening → Today moves it to
-  the top of Today. ThingsBar uses that for **Move to Top** and checks that it
-  worked. Arbitrary drag-and-drop reordering isn't possible; reorder in Things
-  (Open in Things) and ThingsBar follows.
+  URL scheme or JSON). In two lists there is a reliable "move to top": in Today,
+  rescheduling This Evening → Today; in the Inbox, moving to another list and back.
+  Any order can be built from moves to the top, so after a drop ThingsBar sends the
+  fewest moves needed (dragging an item up costs one), re-reads Things to confirm,
+  and rolls back with a message if Things disagrees. Drags in Today make any moved
+  This Evening to-dos daytime ones. Projects, areas, Anytime and Someday can't be
+  reordered this way without side effects (to-dos would move to the bottom or lose
+  their headings), so there the panel follows Things' order; reorder in Things and
+  ThingsBar updates within about 2 s.
 - "When" can't be changed on repeating to-dos (a Things URL-scheme restriction).
 - Headings and checklists aren't shown or edited (not available via AppleScript).
-- Things has no change notifications, so ThingsBar re-reads every 15 s to 5 min
-  (configurable), and whenever the popover opens.
+- Things has no change notifications, so ThingsBar polls a cheap fingerprint every
+  2 s and re-reads when it changes, plus a full re-read every 30 s and whenever the
+  panel opens.
 
 ## Layout
 

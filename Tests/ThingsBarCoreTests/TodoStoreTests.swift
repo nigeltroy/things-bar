@@ -142,28 +142,6 @@ struct TodoStoreActionTests {
         #expect(TodoChanges(deadline: .some(nil)).minimized(against: TodoItem(id: "y", title: "t"), calendar: cal).isEmpty)
     }
 
-    @Test func moveToTopOnlyInTodayWithToken() async {
-        let (store, client) = makeStore()
-        await store.refresh()
-        await store.moveToTop(store.items[1])
-        #expect(store.items.map(\.id) == ["a", "b"], "needs an auth token")
-        store.hasAuthToken = true
-        await store.moveToTop(store.items[1])
-        #expect(store.items.map(\.id) == ["b", "a"])
-        #expect(await client.log == ["top b"])
-        store.settings.source = .anytime
-        #expect(!store.canMoveToTop)
-    }
-
-    @Test func failedMoveToTopRestoresOrder() async {
-        let (store, client) = makeStore()
-        store.hasAuthToken = true
-        await store.refresh()
-        await client.setFailNextCall(.changeNotApplied)
-        await store.moveToTop(store.items[1])
-        #expect(store.items.map(\.id) == ["a", "b"])
-        #expect(store.errorMessage != nil)
-    }
 
     @Test func menuBarShowsTopOneToThreeItems() {
         var s = AppSettings()

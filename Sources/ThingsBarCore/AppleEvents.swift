@@ -134,6 +134,13 @@ enum ThingsEvent {
         return e
     }
 
+    /// Things' `move <to do> to <list>` (THGS/mvtl, target list in 'mvls').
+    static func move(_ spec: NSAppleEventDescriptor, to list: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        let e = event("THGS", "mvtl", direct: spec)
+        e.setParam(list, forKeyword: Code.fourCC("mvls"))
+        return e
+    }
+
     /// Things' `delete` moves to-dos to the Trash.
     static func delete(_ spec: NSAppleEventDescriptor) -> NSAppleEventDescriptor { event("core", "delo", direct: spec) }
 }

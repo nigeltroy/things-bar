@@ -129,7 +129,7 @@ struct LiveThingsIntegrationTests {
         let t1 = try #require(try await client.changeToken(in: .today))
         #expect(try await client.changeToken(in: .today) == t1, "stable while nothing changes")
 
-        try await client.moveToTopOfToday(id: itemA.id) // a reorder, as if dragged in Things
+        try await client.moveToTop(id: itemA.id, in: .today) // a reorder, as if dragged in Things
         let t2 = try #require(try await client.changeToken(in: .today))
         #expect(t2 != t1)
 
@@ -142,5 +142,46 @@ struct LiveThingsIntegrationTests {
         #expect(try await client.changeToken(in: .today) != t3)
         try await client.delete(id: itemA.id)
         for title in [a, b] { if let item = try await find(title) { try await client.delete(id: item.id) } }
+    }
+
+    /// Drag-and-drop through the store, as the UI does, against the real Today and Inbox.
+    /// A filter shows only this test's to-dos, so the user's own to-dos are hidden and
+    /// must keep their order.
+    @MainActor @Test(arguments: [ThingsSource.today, ThingsSource.inbox])
+    func storeReorderSyncsToThings(source: ThingsSource) async throws {
+        let titles = (1...3).map { "\(tag) \(source.name) \($0)" }
+        for t in titles { try await client.add(TodoDraft(title: t), to: source) } // 3 2 1 on top
+        let othersBefore = try await client.todos(in: source).map(\.id).filter { id in true }
+        let settings = MemorySettings()
+        settings.stored.source = source
+        settings.stored.filter.searchText = tag
+        let store = TodoStore(client: client, persistence: settings)
+        store.hasAuthToken = token != nil
+        store.orderSyncDelay = .milliseconds(50)
+        await store.refresh()
+        #expect(store.visibleItems.map(\.title) == titles.reversed())
+
+        func thingsOrder() async throws -> [String] {
+            try await client.todos(in: source).map(\.title).filter { $0.hasPrefix(tag) }
+        }
+        func drag(_ title: String, toGap gap: Int) async throws {
+            let item = try #require(store.visibleItems.first { $0.title == title })
+            store.moveVisible(item, toGap: gap)
+            await store.waitForOrderSync()
+            #expect(store.errorMessage == nil, "\(store.errorMessage ?? "")")
+        }
+
+        try await drag(titles[0], toGap: 0)                    // 1 3 2
+        #expect(try await thingsOrder() == [titles[0], titles[2], titles[1]])
+        try await drag(titles[0], toGap: 3)                    // 3 2 1
+        #expect(try await thingsOrder() == [titles[2], titles[1], titles[0]])
+        try await drag(titles[0], toGap: 1)                    // 3 1 2
+        #expect(try await thingsOrder() == [titles[2], titles[0], titles[1]])
+        #expect(store.visibleItems.map(\.title) == [titles[2], titles[0], titles[1]], "UI shows Things' order")
+
+        let ids = Set(store.items.filter { $0.title.hasPrefix(tag) }.map(\.id))
+        let othersAfter = try await client.todos(in: source).map(\.id).filter { !ids.contains($0) }
+        #expect(othersAfter == othersBefore.filter { !ids.contains($0) }, "other to-dos keep their order")
+        for item in store.items where item.title.hasPrefix(tag) { try await client.delete(id: item.id) }
     }
 }

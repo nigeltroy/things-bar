@@ -99,6 +99,12 @@ enum SelfTest {
         }
         snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel.png"))
         snapshot(GlassPreview { panel(.list) }, to: dir.appendingPathComponent("panel-light.png"), dark: false)
+        if store.visibleItems.count >= 3 {
+            let dragged = store.visibleItems[2].id
+            snapshot(GlassPreview {
+                TodoListView(store: store, state: PanelState(), previewDrag: (dragged, 0)).frame(width: Theme.panelWidth)
+            }, to: dir.appendingPathComponent("drag.png"))
+        }
         snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings.png"))
         snapshot(GlassPreview { panel(.settings) }, to: dir.appendingPathComponent("settings-light.png"), dark: false)
         if let first = store.visibleItems.first {
@@ -251,9 +257,23 @@ enum SelfTest {
         })
         out.append(await step("external reorder shows up", d) {
             guard let four = find("\(tag) four") else { return false }
-            do { try await s.client.moveToTopOfToday(id: four.id) } catch { return false }
+            do { try await s.client.moveToTop(id: four.id, in: .today) } catch { return false }
             try? await Task.sleep(for: .seconds(3)) // change polling runs every 2 s
             return s.topItem?.title == "\(tag) four" && d.statusItem.button?.title.contains("\(tag) four") == true
+        })
+        out.append(await step("drag five above four syncs to Things", d) {
+            guard let five = find("\(tag) five"), let from = s.visibleItems.firstIndex(of: five),
+                  let four = s.visibleItems.firstIndex(where: { $0.title == "\(tag) four" }) else { return false }
+            _ = from
+            s.moveVisible(five, toGap: four)          // what dropping on the line above "four" does
+            try? await Task.sleep(for: .milliseconds(50)) // the title updates on the next run-loop turn
+            let optimistic = d.statusItem.button?.title.contains("\(tag) five") == true
+            await s.waitForOrderSync()
+            let things = (try? await s.client.todos(in: .today).map(\.title)) ?? []
+            let checks = ["optimistic": optimistic, "thingsOrder": things.prefix(2) == ["\(tag) five", "\(tag) four"],
+                          "noError": s.errorMessage == nil, "top": s.topItem?.title == "\(tag) five"]
+            if checks.values.contains(false) { NSLog("drag checks: %@ things: %@", checks.description, things.description) }
+            return !checks.values.contains(false)
         })
         for title in ["\(tag) four", "\(tag) five"] { if let item = find(title) { await s.delete(item) } }
         out.append(["tag": tag])

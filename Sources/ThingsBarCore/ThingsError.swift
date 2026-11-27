@@ -15,6 +15,7 @@ public enum ThingsError: Error, Equatable, LocalizedError, Sendable {
     case missingAuthToken
     /// A URL-scheme write was sent but Things never applied it (wrong token, URLs disabled...).
     case changeNotApplied
+    case reorderUnsupported(String)
     case script(number: Int, message: String)
     case unexpectedResponse(String)
 
@@ -34,6 +35,8 @@ public enum ThingsError: Error, Equatable, LocalizedError, Sendable {
             "Add your Things URL auth token in Settings to edit to-dos."
         case .changeNotApplied:
             "Things didn't apply the change. Check that Things URLs are enabled and the auth token is correct."
+        case let .reorderUnsupported(name):
+            "Things doesn't let other apps reorder \u{201C}\(name)\u{201D}. Reordering works in Today and Inbox."
         case let .script(number, message):
             "Things error \(number): \(message)"
         case let .unexpectedResponse(detail):

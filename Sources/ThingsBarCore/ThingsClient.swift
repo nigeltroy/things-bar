@@ -17,9 +17,9 @@ public protocol ThingsClient: Sendable {
     func delete(id: String) async throws
     /// Opens the to-do in Things (brings Things to the front).
     func reveal(id: String) async throws
-    /// Moves a to-do to the top of Today. Things has no reorder API; rescheduling
-    /// This Evening → Today moves the to-do to the top (observed on Things 3.25).
-    func moveToTopOfToday(id: String) async throws
+    /// Moves a to-do to the top of `source`. Only lists where `ReorderPlan.isSupported`
+    /// is true can be reordered; others throw `reorderUnsupported`.
+    func moveToTop(id: String, in source: ThingsSource) async throws
 }
 
 /// Opens `things:///` URLs and launches Things. The app implements this with NSWorkspace.
@@ -177,6 +177,27 @@ public final class LiveThingsClient: ThingsClient {
         try await opener.open(ThingsURL.show(id: id), activate: true)
     }
 
+    public func moveToTop(id: String, in source: ThingsSource) async throws {
+        switch source {
+        case .today: try await moveToTopOfToday(id: id)
+        case .inbox: try await moveToTopOfInbox(id: id)
+        default: throw ThingsError.reorderUnsupported(source.name)
+        }
+    }
+
+    /// Moving a to-do into the Inbox puts it first, but moving it to the list it's
+    /// already in does nothing, so hop through Someday (Inbox items have no other
+    /// state to lose). Synchronous Apple Events; no auth token needed.
+    func moveToTopOfInbox(id: String) async throws {
+        let someday = ThingsSource.someday.identifier, inbox = ThingsSource.inbox.identifier
+        for list in [someday, inbox] {
+            try await transport.send({ ThingsEvent.move(Specifier.byID(Code.todo, id), to: Specifier.byID(Code.list, list)) },
+                                     decode: { _ in () })
+        }
+        try await waitUntil { try await self.todos(in: .inbox).first?.id == id }
+    }
+
+    /// Rescheduling This Evening → Today puts a to-do first in Today.
     public func moveToTopOfToday(id: String) async throws {
         guard let token = authToken(), !token.isEmpty else { throw ThingsError.missingAuthToken }
         // Not verified step by step: both steps can land within the same second, so the

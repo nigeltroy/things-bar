@@ -65,6 +65,7 @@ public final class TodoStore {
             let (newCatalog, newItems) = try await (cat, todos)
             catalog = newCatalog
             guard source == settings.source else { return } // source changed mid-read
+            guard !isBusyReordering else { return }          // keep the order the user just dropped
             items = newItems
             lastChangeToken = token
             if errorCameFromRefresh { errorMessage = nil }
@@ -84,12 +85,103 @@ public final class TodoStore {
         if token != lastChangeToken { await refresh() }
     }
 
-    // MARK: - Reorder (stub; implemented with drag and drop)
+
+    // MARK: - Reorder
+
+    /// True while ThingsBar is writing a new order to Things.
     public private(set) var isSyncingOrder = false
-    var isBusyReordering: Bool { isSyncingOrder }
-    public var canReorder: Bool { false }
-    public var reorderUnavailableReason: String? { nil }
-    public func moveVisible(_ item: TodoItem, to index: Int) {}
+    /// Briefly true after an order was saved and verified (for a quiet confirmation).
+    public private(set) var orderJustSaved = false
+    /// A dropped order is waiting to be written to Things.
+    public private(set) var hasPendingOrder = false
+    @ObservationIgnored private var orderSyncTask: Task<Void, Never>?
+    /// Pause after the last move before syncing, so a burst of moves syncs once.
+    @ObservationIgnored public var orderSyncDelay: Duration = .milliseconds(600)
+    var isBusyReordering: Bool { isSyncingOrder || hasPendingOrder }
+
+    public var canReorder: Bool { reorderUnavailableReason == nil }
+
+    /// Why the current list can't be reordered from ThingsBar, or nil if it can.
+    public var reorderUnavailableReason: String? {
+        guard ReorderPlan.isSupported(in: settings.source) else { return "Reordering works in Today and Inbox" }
+        if settings.source == .today && !hasAuthToken { return "Add your auth token in Settings to reorder" }
+        return nil
+    }
+
+    /// Drops `item` into `gap` (0…count) of the visible list. The list updates at once;
+    /// Things is updated after a short pause (see `orderSyncDelay`).
+    public func moveVisible(_ item: TodoItem, toGap gap: Int) {
+        guard canReorder,
+              let order = ReorderPlan.moveVisible(id: item.id, toGap: gap, visible: visibleItems.map(\.id), all: items.map(\.id))
+        else { return }
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        items = order.compactMap { byID[$0] }
+        hasPendingOrder = true
+        orderJustSaved = false
+        scheduleOrderSync()
+    }
+
+    /// Moves `item` to `index` of the visible list (menu commands and shortcuts).
+    public func moveVisible(_ item: TodoItem, to index: Int) {
+        guard let from = visibleItems.firstIndex(of: item) else { return }
+        let target = max(0, min(index, visibleItems.count - 1))
+        moveVisible(item, toGap: target > from ? target + 1 : target)
+    }
+
+    /// Waits until queued order changes have been written (used by tests).
+    public func waitForOrderSync() async {
+        while let task = orderSyncTask { await task.value; if orderSyncTask == task { break } }
+    }
+
+    private func scheduleOrderSync() {
+        guard !isSyncingOrder else { return } // the running sync picks the new order up
+        orderSyncTask?.cancel()
+        let delay = orderSyncDelay
+        orderSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await self?.syncOrder()
+        }
+    }
+
+    private func syncOrder() async {
+        if let running = refreshTask { await running.value }
+        let source = settings.source
+        isSyncingOrder = true
+        var desired: [String] = []
+        var failure: String?
+        while hasPendingOrder, failure == nil, source == settings.source {
+            hasPendingOrder = false
+            desired = items.map(\.id)
+            do {
+                let current = try await client.todos(in: source).map(\.id) // fresh: Things may have changed
+                for id in ReorderPlan.moveToTopSequence(from: current, to: desired) {
+                    try await client.moveToTop(id: id, in: source)
+                }
+            } catch {
+                failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+        isSyncingOrder = false
+        hasPendingOrder = false
+        if let running = refreshTask { await running.value }
+        await refresh() // shows Things' real order: confirms success, or rolls back a failure
+        guard source == settings.source else { return }
+        if failure == nil {
+            let ids = items.map(\.id), common = Set(ids).intersection(desired)
+            if ids.filter(common.contains) != desired.filter(common.contains) { failure = "Things didn't keep the new order." }
+        }
+        if let failure {
+            errorMessage = "Couldn't save the new order. \(failure)"
+            errorCameFromRefresh = false
+        } else {
+            orderJustSaved = true
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                self?.orderJustSaved = false
+            }
+        }
+    }
 
     public func dismissError() { errorMessage = nil; errorCameFromRefresh = false }
 
@@ -127,20 +219,6 @@ public final class TodoStore {
         let ok = await perform { try await self.client.update(id: item.id, changes: diff) }
         await refresh()
         return ok
-    }
-
-    /// Only Today supports reordering (see ThingsClient.moveToTopOfToday).
-    public var canMoveToTop: Bool { settings.source == .today && hasAuthToken }
-
-    public func moveToTop(_ item: TodoItem) async {
-        guard canMoveToTop, let index = items.firstIndex(where: { $0.id == item.id }), index > 0 else { return }
-        let previous = items
-        pendingIDs.insert(item.id)
-        items.insert(items.remove(at: index), at: 0) // optimistic
-        let ok = await perform { try await self.client.moveToTopOfToday(id: item.id) }
-        pendingIDs.remove(item.id)
-        if !ok { items = previous }
-        await refresh()
     }
 
     public func reveal(_ item: TodoItem) async {

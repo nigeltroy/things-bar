@@ -60,11 +60,11 @@ public actor InMemoryThingsClient: ThingsClient {
     public func delete(id: String) async throws { try check(); remove(id); log.append("delete \(id)") }
     public func reveal(id: String) async throws { try check(); log.append("reveal \(id)") }
 
-    public func moveToTopOfToday(id: String) async throws {
+    public func moveToTop(id: String, in source: ThingsSource) async throws {
         try check()
-        let key = ThingsSource.today.id
-        if let i = items[key]?.firstIndex(where: { $0.id == id }) {
-            items[key]!.insert(items[key]!.remove(at: i), at: 0)
+        guard ReorderPlan.isSupported(in: source) else { throw ThingsError.reorderUnsupported(source.name) }
+        if let i = items[source.id]?.firstIndex(where: { $0.id == id }) {
+            items[source.id]!.insert(items[source.id]!.remove(at: i), at: 0)
         }
         log.append("top \(id)")
     }
