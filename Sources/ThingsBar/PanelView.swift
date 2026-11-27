@@ -7,8 +7,9 @@ final class PanelState {
     enum Route { case list, settings }
     var route: Route = .list
     var editingID: String?
-    /// The row under the pointer: target of ⌘↑/⌘↓ shortcuts.
-    var hoveredID: String?
+    /// The highlighted row, as in a menu: set by the pointer and by ↑/↓. Target of
+    /// Space (complete), Return (edit), ⌘⌫ (trash) and ⌘↑/⌘↓ (move).
+    var selectedID: String?
     /// How many times the panel has been opened (hints show only for the first few).
     var opens = 0
     /// Briefly set after a drop so the moved row flashes.
@@ -25,6 +26,7 @@ final class PanelState {
     /// Esc: leave the editor or settings first; returns false when there's nothing to back out of.
     func back() -> Bool {
         if editingID != nil { editingID = nil; return true }
+        if selectedID != nil && route == .list { selectedID = nil; return true }
         if route == .settings { route = .list; return true }
         return false
     }
@@ -83,7 +85,7 @@ private struct KeyboardShortcuts: View {
     }
 
     private func move(_ target: (Int, Int) -> Int) {
-        guard state.route == .list, store.canReorder, let id = state.hoveredID,
+        guard state.route == .list, store.canReorder, let id = state.selectedID,
               let index = store.visibleItems.firstIndex(where: { $0.id == id }) else { return }
         let to = max(0, min(target(index, store.visibleItems.count), store.visibleItems.count - 1))
         guard to != index else { return }
@@ -220,6 +222,8 @@ struct TodoListView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var scrollOffset: CGFloat = 0           // content y at the viewport's top
     @State private var lastAutoScroll = Date.distantPast
+    /// Scroll to the selection only when the keyboard moved it (the pointer is already there).
+    private var keyboardDriven: Bool { NSApp.currentEvent?.type == .keyDown }
 
     init(store: TodoStore, state: PanelState, previewDrag: (id: String, gap: Int)? = nil) {
         self.store = store; self.state = state
@@ -248,6 +252,10 @@ struct TodoListView: View {
                 .frame(maxHeight: 440)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
+                .onChange(of: state.selectedID) { _, id in
+                    guard let id, keyboardDriven else { return }
+                    withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id) }
+                }
                 // The whole visible list, padding included, accepts drops: releasing a
                 // little below the last row means "to the bottom", as people expect.
                 .contentShape(Rectangle())
@@ -268,8 +276,9 @@ struct TodoListView: View {
                                 edit: { state.editingID = item.id },
                                 highlighted: state.justMovedID == item.id,
                                 isDragged: draggingID == item.id,
+                                selected: state.selectedID == item.id,
                                 hoverChanged: { inside in
-                                    if inside { state.hoveredID = item.id } else if state.hoveredID == item.id { state.hoveredID = nil }
+                                    if inside { state.selectedID = item.id } else if state.selectedID == item.id { state.selectedID = nil }
                                 })
                         .opacity(draggingID == item.id ? 0.4 : 1)
                         .modifier(Draggable(enabled: store.canReorder && state.editingID == nil && !store.pendingIDs.contains(item.id),
@@ -485,13 +494,15 @@ struct TodoRow: View {
     var highlighted = false
     /// The row is being dragged: dimmed in place, without hover actions.
     var isDragged = false
+    /// Highlighted by the keyboard (or the pointer): looks like hover.
+    var selected = false
     var hoverChanged: (Bool) -> Void = { _ in }
     /// Self-test only: render the hover state without a mouse.
     var forceHover = false
     @State private var hoveringState = false
     @State private var checked = false
 
-    private var hovering: Bool { hoveringState || forceHover }
+    private var hovering: Bool { hoveringState || forceHover || selected }
     private var pending: Bool { store.pendingIDs.contains(item.id) }
     private static let actionsWidth: CGFloat = 52
 
@@ -846,5 +857,45 @@ struct ErrorBanner: View {
         }
         .padding(.horizontal, Theme.textInset).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: Theme.rowCorner).fill(Theme.strongFill))
+    }
+}
+
+/// Keyboard control of the list while no text field is being edited (see AppDelegate's
+/// key monitor). Returns true when the key was handled.
+@MainActor
+enum ListKeys {
+    static func handle(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, store: TodoStore, state: PanelState) -> Bool {
+        guard state.route == .list, state.editingID == nil else { return false }
+        let items = store.visibleItems
+        let index = state.selectedID.flatMap { id in items.firstIndex { $0.id == id } }
+        let mods = modifiers.intersection([.command, .option, .control, .shift])
+        switch (keyCode, mods) {
+        case (125, []): // ↓
+            guard !items.isEmpty else { return false }
+            state.selectedID = items[min((index ?? -1) + 1, items.count - 1)].id
+            return true
+        case (126, []): // ↑
+            guard !items.isEmpty else { return false }
+            state.selectedID = items[max((index ?? items.count) - 1, 0)].id
+            return true
+        case (49, []): // Space: complete
+            guard let i = index else { return false }
+            let item = items[i]
+            state.selectedID = i + 1 < items.count ? items[i + 1].id : (i > 0 ? items[i - 1].id : nil)
+            Task { await store.complete(item) }
+            return true
+        case (36, []), (76, []): // Return / Enter: edit
+            guard let i = index else { return false }
+            state.editingID = items[i].id
+            return true
+        case (51, [.command]): // ⌘⌫: trash
+            guard let i = index else { return false }
+            let item = items[i]
+            state.selectedID = i + 1 < items.count ? items[i + 1].id : (i > 0 ? items[i - 1].id : nil)
+            Task { await store.delete(item) }
+            return true
+        default:
+            return false
+        }
     }
 }

@@ -195,8 +195,8 @@ struct SettingsPage: View {
 
     private var keyboardSection: some View {
         SettingsSection("Keyboard") {
-            ForEach([("New to-do", "⌘N"), ("Move to-do under the pointer", "⌘↑  ⌘↓"), ("Move to top or bottom", "⌥⌘↑  ⌥⌘↓"),
-                     ("Edit", "Double-click"), ("Undo complete, trash or reorder", "⌘Z"), ("Settings", "⌘,"), ("Back or close", "Esc")], id: \.0) { label, keys in
+            ForEach([("New to-do", "⌘N"), ("Highlight a to-do", "↑  ↓"), ("Complete it", "Space"), ("Edit it", "↩  or double-click"),
+                     ("Move it to Trash", "⌘⌫"), ("Move it up or down", "⌘↑  ⌘↓"), ("Move it to top or bottom", "⌥⌘↑  ⌥⌘↓"), ("Undo complete, trash or reorder", "⌘Z"), ("Settings", "⌘,"), ("Back or close", "Esc")], id: \.0) { label, keys in
                 HStack {
                     Text(label).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Spacer()

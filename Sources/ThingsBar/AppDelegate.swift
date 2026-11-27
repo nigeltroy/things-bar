@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var panel: PanelController!
     private var refreshTimer: Timer?
     private var changeTimer: Timer?
+    private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
@@ -33,8 +34,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.handleEscape = { [weak self] in self?.panelState.back() ?? false }
         panel.onClose = { [weak self] in
             self?.panelState.editingID = nil
+            self?.panelState.selectedID = nil
             self?.panelState.route = .list
             self?.statusItem.button?.highlight(false)
+        }
+
+        // Arrow keys, Space, Return and ⌘⌫ drive the list unless a text field is being edited.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let keyCode = event.keyCode, modifiers = event.modifierFlags
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.panel.isShown, self.panel.panel.isKeyWindow,
+                      !(self.panel.panel.firstResponder is NSTextView) else { return false }
+                return ListKeys.handle(keyCode: keyCode, modifiers: modifiers, store: self.store, state: self.panelState)
+            }
+            return handled ? nil : event
         }
 
         observeTitle()
