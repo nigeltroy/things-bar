@@ -11,9 +11,9 @@ enum SelfTest {
     /// `--selftest-live` reads the real Things instead of fixture data.
     static var useLiveThings: Bool { CommandLine.arguments.contains("--selftest-live") }
 
-    static func makeStore() -> TodoStore {
+    static func makeStore(tokenStore: TokenStoring) -> TodoStore {
         if useLiveThings {
-            let store = AppDelegate.makeLiveStore(persistence: ephemeralSettings())
+            let store = AppDelegate.makeLiveStore(tokenStore: tokenStore, persistence: ephemeralSettings())
             // `--selftest-source <built-in list name>` e.g. Anytime
             let args = CommandLine.arguments
             if let i = args.firstIndex(of: "--selftest-source"), i + 1 < args.count,
@@ -62,7 +62,19 @@ enum SelfTest {
             ]
             write(json: report, to: dir.appendingPathComponent("status.json"))
             snapshot(PopoverView(store: store), to: dir.appendingPathComponent("popover.png"))
-            NSApp.terminate(nil)
+            snapshot(SettingsView(store: store, tokenStore: delegate.tokenStore), to: dir.appendingPathComponent("settings.png"))
+
+            // Exercise settings → store → menu bar wiring.
+            if !useLiveThings {
+                store.settings.filter.includeTags = ["Home"]
+                store.settings.showCountInMenuBar = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                write(json: ["titleAfterFilter": item.button?.title ?? "",
+                             "visibleAfterFilter": store.visibleItems.map(\.title)],
+                      to: dir.appendingPathComponent("after-settings.json"))
+                NSApp.terminate(nil)
+            }
         }
     }
 

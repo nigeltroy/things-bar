@@ -3,6 +3,7 @@ import ThingsBarCore
 
 struct PopoverView: View {
     let store: TodoStore
+    var openSettings: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,6 +37,7 @@ struct PopoverView: View {
             }
             Divider()
             HStack {
+                Button("Settings…", action: openSettings)
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }

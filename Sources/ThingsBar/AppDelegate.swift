@@ -7,10 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private(set) var store: TodoStore!
+    private(set) var tokenStore: TokenStoring!
+    private(set) var settingsWindow: SettingsWindowController!
     private var refreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        store = SelfTest.isActive ? SelfTest.makeStore() : Self.makeLiveStore()
+        tokenStore = SelfTest.isActive ? MemoryTokenStore() : KeychainTokenStore()
+        store = SelfTest.isActive ? SelfTest.makeStore(tokenStore: tokenStore) : Self.makeLiveStore(tokenStore: tokenStore)
+        settingsWindow = SettingsWindowController(store: store, tokenStore: tokenStore)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -20,10 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.action = #selector(togglePopover(_:))
         }
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: PopoverView(store: store))
+        popover.contentViewController = NSHostingController(rootView: PopoverView(store: store, openSettings: { [weak self] in
+            self?.popover.performClose(nil)
+            self?.settingsWindow.show()
+        }))
 
         observeTitle()
-        scheduleRefresh()
+        observeRefreshInterval()
         Task { await store.refresh() }
 
         if let dir = SelfTest.outputDirectory {
@@ -31,8 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    static func makeLiveStore(persistence: SettingsPersisting = UserDefaultsSettings()) -> TodoStore {
-        let client = LiveThingsClient(opener: WorkspaceURLOpener(), authToken: { nil })
+    static func makeLiveStore(tokenStore: TokenStoring, persistence: SettingsPersisting = UserDefaultsSettings()) -> TodoStore {
+        let client = LiveThingsClient(opener: WorkspaceURLOpener(), authToken: { [tokenStore] in tokenStore.token })
         return TodoStore(client: client, persistence: persistence)
     }
 
@@ -46,9 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func scheduleRefresh() {
+    /// Re-creates the refresh timer whenever the interval setting changes.
+    private func observeRefreshInterval() {
+        let seconds = withObservationTracking { store.settings.refreshSeconds } onChange: { [weak self] in
+            Task { @MainActor in self?.observeRefreshInterval() }
+        }
+        scheduleRefresh(every: seconds)
+    }
+
+    private func scheduleRefresh(every seconds: Int) {
         refreshTimer?.invalidate()
-        let interval = TimeInterval(max(store.settings.refreshSeconds, 5))
+        let interval = TimeInterval(max(seconds, 5))
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.store.refresh() }
         }
