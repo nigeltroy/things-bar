@@ -102,6 +102,9 @@ struct SettingsView: View {
                 Text("1 minute").tag(60)
                 Text("5 minutes").tag(300)
             }
+            Picker("Appearance", selection: $store.settings.appearance) {
+                ForEach(AppSettings.Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
             Toggle("Open at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, on in setLaunchAtLogin(on) }
             if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
@@ -139,6 +142,7 @@ struct SettingsView: View {
     private func saveToken() {
         do {
             try tokenStore.setToken(tokenDraft)
+            store.hasAuthToken = tokenStore.token != nil
             tokenMessage = tokenStore.token == nil ? "Token removed." : "Token saved to Keychain."
         } catch {
             tokenMessage = "Couldn't save: \(error.localizedDescription)"
@@ -157,6 +161,13 @@ final class SettingsWindowController {
         self.store = store; self.tokenStore = tokenStore
     }
 
+    private var appearance: NSAppearance?
+
+    func setAppearance(_ appearance: NSAppearance?) {
+        self.appearance = appearance
+        window?.appearance = appearance
+    }
+
     func show() {
         if window == nil {
             let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, tokenStore: tokenStore)))
@@ -164,6 +175,7 @@ final class SettingsWindowController {
             w.styleMask = [.titled, .closable]
             w.isReleasedWhenClosed = false
             w.center()
+            w.appearance = appearance
             window = w
         }
         NSApp.activate()

@@ -82,3 +82,62 @@ struct TodoStoreTests {
         #expect(s.source == .today)
     }
 }
+
+@MainActor
+struct TodoStoreActionTests {
+    func makeStore() -> (TodoStore, InMemoryThingsClient) {
+        let client = InMemoryThingsClient(items: [.today: [
+            TodoItem(id: "a", title: "First", notes: "n", tags: ["Home"]),
+            TodoItem(id: "b", title: "Second"),
+        ]])
+        return (TodoStore(client: client, persistence: MemorySettings()), client)
+    }
+
+    @Test func addPutsNewItemOnTopAndTrims() async {
+        let (store, client) = makeStore()
+        await store.refresh()
+        #expect(await store.add(TodoDraft(title: "  New one  ")))
+        #expect(store.topItem?.title == "New one")
+        #expect(await client.log == ["add New one"])
+        #expect(await store.add(TodoDraft(title: "   ")) == false, "blank titles are ignored")
+    }
+
+    @Test func completeRemovesAndAdvancesTop() async {
+        let (store, client) = makeStore()
+        await store.refresh()
+        await store.complete(store.topItem!)
+        #expect(store.topItem?.id == "b")
+        #expect(await client.log == ["complete a"])
+        #expect(store.pendingIDs.isEmpty)
+    }
+
+    @Test func failedDeleteRestoresRowAndShowsError() async {
+        let (store, client) = makeStore()
+        await store.refresh()
+        await client.setFailNextCall(.timedOut)
+        await store.delete(store.items[0])
+        #expect(store.items.map(\.id) == ["a", "b"])
+        #expect(store.errorMessage == ThingsError.timedOut.errorDescription)
+    }
+
+    @Test func updateSendsOnlyRealChanges() async {
+        let (store, client) = makeStore()
+        await store.refresh()
+        let item = store.items[0]
+        #expect(await store.update(item, changes: TodoChanges(title: "First", notes: "n", tags: ["Home"])))
+        #expect(await client.log.isEmpty, "no-op edit sends nothing")
+        #expect(await store.update(item, changes: TodoChanges(title: "Renamed", notes: "n")))
+        #expect(await client.log == ["update a"])
+        #expect(store.items[0].title == "Renamed")
+    }
+
+    @Test func minimizedComparesDeadlinesByDay() {
+        let cal = Calendar(identifier: .gregorian)
+        let day = cal.date(from: DateComponents(year: 2026, month: 12, day: 5, hour: 0))!
+        let sameDayLater = cal.date(byAdding: .hour, value: 9, to: day)!
+        let item = TodoItem(id: "x", title: "t", deadline: day)
+        #expect(TodoChanges(deadline: .some(sameDayLater)).minimized(against: item, calendar: cal).isEmpty)
+        #expect(!TodoChanges(deadline: .some(nil)).minimized(against: item, calendar: cal).isEmpty)
+        #expect(TodoChanges(deadline: .some(nil)).minimized(against: TodoItem(id: "y", title: "t"), calendar: cal).isEmpty)
+    }
+}

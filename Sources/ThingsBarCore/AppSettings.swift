@@ -10,6 +10,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var menuBarTitleLength: Int = 32
     /// Append the number of remaining to-dos, e.g. "Write report  +4".
     public var showCountInMenuBar = false
+    public var appearance: Appearance = .dark
+
+    public enum Appearance: String, Codable, CaseIterable, Sendable {
+        case system, dark, light
+        public var label: String { rawValue.capitalized }
+    }
 
     public init() {}
 
@@ -22,6 +28,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         refreshSeconds = try c.decodeIfPresent(Int.self, forKey: .refreshSeconds) ?? d.refreshSeconds
         menuBarTitleLength = try c.decodeIfPresent(Int.self, forKey: .menuBarTitleLength) ?? d.menuBarTitleLength
         showCountInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .showCountInMenuBar) ?? d.showCountInMenuBar
+        appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
     }
 }
 
