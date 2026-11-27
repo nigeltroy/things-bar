@@ -72,10 +72,13 @@ struct PopoverView: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            IconButton(systemName: "gearshape", help: "Settings…", action: openSettings)
-            IconButton(systemName: "arrow.clockwise", help: "Refresh") { Task { await store.refresh() } }
+            IconButton(systemName: "gearshape", help: "Settings… (⌘,)", action: openSettings)
+                .keyboardShortcut(",", modifiers: .command)
+            IconButton(systemName: "arrow.clockwise", help: "Refresh (⌘R)") { Task { await store.refresh() } }
+                .keyboardShortcut("r", modifiers: .command)
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textSecondary)
@@ -105,6 +108,10 @@ struct AddTodoField: View {
                 .focused($focused)
                 .disabled(store.isAdding)
                 .onSubmit(submit)
+            Button("") { focused = true }
+                .keyboardShortcut("n", modifiers: .command)
+                .buttonStyle(.plain).frame(width: 0, height: 0).opacity(0)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: Theme.corner).fill(Theme.surface))

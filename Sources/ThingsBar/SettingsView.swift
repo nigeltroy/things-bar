@@ -19,6 +19,8 @@ struct SettingsView: View {
             thingsSection
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.background)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
         .task { await store.refresh() }
